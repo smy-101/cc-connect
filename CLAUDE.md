@@ -126,3 +126,55 @@ For OpenSpec configuration, see `openspec/config.yaml`.
 6. **Advanced** - Multi-project, multi-bot relay, voice, full cron system
 
 Current focus: MVP with Feishu + Claude Code only.
+
+## Feishu Platform Adapter
+
+The Feishu adapter (`internal/platform/feishu/`) provides integration with Feishu's WebSocket long connection API.
+
+### Key Components
+
+| File | Purpose |
+|------|---------|
+| `client.go` | FeishuClient interface definition |
+| `client_impl.go` | SDK-based client implementation |
+| `mock_client.go` | Mock client for testing |
+| `message_converter.go` | Message format conversion (Feishu ↔ Unified) |
+| `event_parser.go` | Parse `im.message.receive_v1` events |
+| `sender.go` | Send messages to Feishu API |
+| `adapter.go` | Integrate with core.Router |
+| `async_processor.go` | Async event processing for fast ACK |
+
+### Usage Example
+
+```go
+// Create client
+client := feishu.NewSDKClient(appID, appSecret)
+
+// Create adapter with router
+router := core.NewRouter()
+adapter := feishu.NewAdapter(client, router)
+
+// Register handler for text messages
+router.Register(core.MessageTypeText, func(ctx context.Context, msg *core.Message) error {
+    // Handle the message
+    return adapter.SendReply(ctx, msg.ChannelID, "Echo: "+msg.Content)
+})
+
+// Start the connection
+if err := adapter.Start(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Testing
+
+```bash
+# Run feishu package tests
+go test ./internal/platform/feishu/... -v
+
+# Run with race detection
+go test ./internal/platform/feishu/... -race
+
+# Run integration tests (requires build tag)
+go test ./internal/platform/feishu/... -tags=integration -v
+```
