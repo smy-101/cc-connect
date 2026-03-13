@@ -73,11 +73,48 @@ This project uses OpenSpec for structured change management. Use the opsx comman
 
 ## Configuration Reference
 
-See `openspec/config.yaml` for:
-- Project context and MVP scope
-- Architecture preferences
-- Quality gates and acceptance criteria
-- Rules for proposals, designs, tasks, and specs
+The configuration system uses TOML format with environment variable expansion support.
+
+### Configuration File Structure
+
+```toml
+# Application-level config
+log_level = "info"              # debug, info, warn, error
+default_project = "my-project"  # Default project name
+
+# Project configurations
+[[projects]]
+name = "my-project"
+description = "My project description"
+working_dir = "/home/user/workspace"
+
+[projects.feishu]
+app_id = "${FEISHU_APP_ID}"      # Environment variable expansion
+app_secret = "${FEISHU_APP_SECRET}"
+enabled = true
+
+[projects.claude_code]
+default_permission_mode = "default"  # default, edit, acceptEdits, plan, yolo, bypassPermissions
+enabled = true
+```
+
+### Key Types
+
+- `AppConfig` - Application-level configuration
+- `ProjectConfig` - Per-project configuration
+- `FeishuConfig` - Feishu platform settings
+- `ClaudeCodeConfig` - Claude Code agent settings
+- `SessionConfigOpt` - Optional session config overrides
+
+### Environment Variables
+
+Use `${VAR}` syntax for environment variable expansion. Missing variables become empty strings with validation warnings.
+
+### Example Configuration
+
+See `config.example.toml` for a complete example.
+
+For OpenSpec configuration, see `openspec/config.yaml`.
 
 ## Development Phases
 
