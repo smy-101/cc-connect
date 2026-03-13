@@ -585,3 +585,133 @@ func TestRouterContextCancel(t *testing.T) {
 		}
 	})
 }
+
+// TestRouteWithSession 测试带会话的路由
+func TestRouteWithSession(t *testing.T) {
+	t.Run("自动派生 SessionID", func(t *testing.T) {
+		router := NewRouter()
+		var receivedSession *Session
+		router.RegisterSessionHandler(MessageTypeText, func(ctx context.Context, msg *Message, session *Session) error {
+			receivedSession = session
+			return nil
+		})
+
+		msg := NewTextMessage("feishu", "ou_xxx", "hello")
+		err := router.RouteWithSession(context.Background(), msg)
+
+		if err != nil {
+			t.Fatalf("RouteWithSession failed: %v", err)
+		}
+		if receivedSession == nil {
+			t.Fatal("session should not be nil")
+		}
+		if receivedSession.ID != "feishu:user:ou_xxx" {
+			t.Errorf("session.ID = %q, want %q", receivedSession.ID, "feishu:user:ou_xxx")
+		}
+	})
+
+	t.Run("自动获取或创建会话", func(t *testing.T) {
+		router := NewRouter()
+		callCount := 0
+		router.RegisterSessionHandler(MessageTypeText, func(ctx context.Context, msg *Message, session *Session) error {
+			callCount++
+			return nil
+		})
+
+		// 第一次调用应该创建会话
+		msg1 := NewTextMessage("feishu", "ou_yyy", "hello1")
+		router.RouteWithSession(context.Background(), msg1)
+
+		// 第二次调用应该复用会话
+		msg2 := NewTextMessage("feishu", "ou_yyy", "hello2")
+		router.RouteWithSession(context.Background(), msg2)
+
+		if callCount != 2 {
+			t.Errorf("callCount = %d, want 2", callCount)
+		}
+	})
+
+	t.Run("传递会话给处理器", func(t *testing.T) {
+		router := NewRouter()
+		var receivedSession *Session
+		router.RegisterSessionHandler(MessageTypeText, func(ctx context.Context, msg *Message, session *Session) error {
+			receivedSession = session
+			return nil
+		})
+
+		msg := NewTextMessage("feishu", "ou_zzz", "hello")
+		router.RouteWithSession(context.Background(), msg)
+
+		if receivedSession == nil {
+			t.Fatal("session should be passed to handler")
+		}
+	})
+}
+
+// TestSessionHandler 测试 SessionHandler 类型
+func TestSessionHandler(t *testing.T) {
+	t.Run("新签名处理器", func(t *testing.T) {
+		router := NewRouter()
+		var receivedMsg *Message
+		var receivedSession *Session
+
+		handler := func(ctx context.Context, msg *Message, session *Session) error {
+			receivedMsg = msg
+			receivedSession = session
+			return nil
+		}
+
+		router.RegisterSessionHandler(MessageTypeText, handler)
+
+		msg := NewTextMessage("feishu", "ou_xxx", "test")
+		router.RouteWithSession(context.Background(), msg)
+
+		if receivedMsg == nil {
+			t.Error("message should be passed")
+		}
+		if receivedSession == nil {
+			t.Error("session should be passed")
+		}
+	})
+
+	t.Run("会话上下文传递", func(t *testing.T) {
+		router := NewRouter()
+		var sessionFromHandler *Session
+
+		router.RegisterSessionHandler(MessageTypeText, func(ctx context.Context, msg *Message, session *Session) error {
+			sessionFromHandler = session
+			// 修改会话
+			session.BindAgent("test-agent")
+			return nil
+		})
+
+		msg := NewTextMessage("feishu", "ou_test", "test")
+		router.RouteWithSession(context.Background(), msg)
+
+		// 验证会话上下文被传递
+		if sessionFromHandler == nil {
+			t.Fatal("session should not be nil")
+		}
+
+		// 注意：由于返回的是副本，修改不会影响内部状态
+		// 如果需要修改内部状态，需要使用 SessionManager.Update
+	})
+}
+
+// TestRouterSessionManager 测试 Router 持有 SessionManager
+func TestRouterSessionManager(t *testing.T) {
+	t.Run("Router 可以访问 SessionManager", func(t *testing.T) {
+		router := NewRouter()
+		if router.Sessions() == nil {
+			t.Error("Router should have SessionManager")
+		}
+	})
+
+	t.Run("手动创建会话", func(t *testing.T) {
+		router := NewRouter()
+		session := router.Sessions().GetOrCreate("feishu:user:manual")
+		if session == nil {
+			t.Error("should be able to create session manually")
+		}
+	})
+}

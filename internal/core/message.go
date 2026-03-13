@@ -25,6 +25,7 @@ type Message struct {
 	ID        string      `json:"id"`
 	Platform  string      `json:"platform"`
 	UserID    string      `json:"user_id"`
+	ChannelID string      `json:"channel_id,omitempty"`
 	Content   string      `json:"content"`
 	Type      MessageType `json:"type"`
 	Timestamp time.Time   `json:"timestamp"`

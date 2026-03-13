@@ -384,3 +384,123 @@ func TestMessageEdge(t *testing.T) {
 		}
 	})
 }
+
+// TestMessageChannelID 测试 Message ChannelID 字段
+func TestMessageChannelID(t *testing.T) {
+	t.Run("ChannelID 字段存在", func(t *testing.T) {
+		msg := &Message{
+			ID:        "test-id",
+			Platform:  "feishu",
+			UserID:    "ou_xxx",
+			ChannelID: "oc_yyy",
+			Content:   "test",
+			Type:      MessageTypeText,
+			Timestamp: time.Now(),
+		}
+		if msg.ChannelID != "oc_yyy" {
+			t.Errorf("ChannelID = %q, want %q", msg.ChannelID, "oc_yyy")
+		}
+	})
+
+	t.Run("ChannelID JSON 序列化", func(t *testing.T) {
+		msg := &Message{
+			ID:        "test-id",
+			Platform:  "feishu",
+			UserID:    "ou_xxx",
+			ChannelID: "oc_yyy",
+			Content:   "test",
+			Type:      MessageTypeText,
+			Timestamp: time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC),
+		}
+
+		data, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatalf("Marshal failed: %v", err)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Unmarshal failed: %v", err)
+		}
+
+		if result["channel_id"] != "oc_yyy" {
+			t.Errorf("channel_id = %v, want %q", result["channel_id"], "oc_yyy")
+		}
+	})
+
+	t.Run("ChannelID JSON 反序列化", func(t *testing.T) {
+		jsonData := `{"id":"test-id","platform":"feishu","user_id":"ou_xxx","channel_id":"oc_yyy","content":"test","type":"text","timestamp":"2024-03-01T12:00:00Z"}`
+		msg, err := FromJSON([]byte(jsonData))
+		if err != nil {
+			t.Fatalf("FromJSON failed: %v", err)
+		}
+		if msg.ChannelID != "oc_yyy" {
+			t.Errorf("ChannelID = %q, want %q", msg.ChannelID, "oc_yyy")
+		}
+	})
+
+	t.Run("ChannelID 可选（私聊消息）", func(t *testing.T) {
+		// 私聊消息没有 ChannelID
+		msg := &Message{
+			ID:        "test-id",
+			Platform:  "feishu",
+			UserID:    "ou_xxx",
+			Content:   "test",
+			Type:      MessageTypeText,
+			Timestamp: time.Now(),
+		}
+
+		data, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatalf("Marshal failed: %v", err)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Unmarshal failed: %v", err)
+		}
+
+		// ChannelID 为空时不应出现在 JSON 中 (omitempty)
+		if _, exists := result["channel_id"]; exists {
+			t.Error("channel_id should not appear in JSON when empty (omitempty)")
+		}
+	})
+
+	t.Run("ChannelID 不影响反序列化", func(t *testing.T) {
+		// 不包含 channel_id 的 JSON 应该正常反序列化
+		jsonData := `{"id":"test-id","platform":"feishu","user_id":"ou_xxx","content":"test","type":"text","timestamp":"2024-03-01T12:00:00Z"}`
+		msg, err := FromJSON([]byte(jsonData))
+		if err != nil {
+			t.Fatalf("FromJSON failed: %v", err)
+		}
+		if msg.ChannelID != "" {
+			t.Errorf("ChannelID = %q, want empty", msg.ChannelID)
+		}
+	})
+
+	t.Run("往返一致性", func(t *testing.T) {
+		original := &Message{
+			ID:        "test-id",
+			Platform:  "feishu",
+			UserID:    "ou_xxx",
+			ChannelID: "oc_yyy",
+			Content:   "test",
+			Type:      MessageTypeText,
+			Timestamp: time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC),
+		}
+
+		data, err := original.ToJSON()
+		if err != nil {
+			t.Fatalf("ToJSON failed: %v", err)
+		}
+
+		recovered, err := FromJSON(data)
+		if err != nil {
+			t.Fatalf("FromJSON failed: %v", err)
+		}
+
+		if recovered.ChannelID != original.ChannelID {
+			t.Errorf("ChannelID = %q, want %q", recovered.ChannelID, original.ChannelID)
+		}
+	})
+}
