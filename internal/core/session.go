@@ -263,3 +263,15 @@ func DeriveSessionID(msg *Message) SessionID {
 	}
 	return SessionID(fmt.Sprintf("%s:user:%s", msg.Platform, msg.UserID))
 }
+
+// List returns a list of all active sessions (clones).
+func (m *SessionManager) List() []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make([]*Session, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		result = append(result, session.Clone())
+	}
+	return result
+}

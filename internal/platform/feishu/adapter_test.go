@@ -486,3 +486,160 @@ func TestAdapterIntegration(t *testing.T) {
 		}
 	})
 }
+
+// Command detection tests
+
+func TestAdapterCommandDetection(t *testing.T) {
+	t.Run("slash command converted to MessageTypeCommand", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+
+		var receivedMsg *core.Message
+		router.Register(core.MessageTypeCommand, func(ctx context.Context, msg *core.Message) error {
+			receivedMsg = msg
+			return nil
+		})
+
+		adapter := NewAdapter(mockClient, router)
+
+		event := &MessageReceiveEvent{
+			EventID:     "evt_cmd_001",
+			MessageID:   "msg_cmd_001",
+			MessageType: "text",
+			Content:     `{"text":"/mode yolo"}`,
+			ChatID:      "oc_chat",
+			ChatType:    "p2p",
+			Sender:      SenderInfo{OpenID: "ou_user"},
+			CreateTime:  time.Now(),
+		}
+
+		err := adapter.HandleEvent(context.Background(), event)
+		if err != nil {
+			t.Errorf("HandleEvent() error = %v", err)
+		}
+
+		if receivedMsg == nil {
+			t.Fatal("receivedMsg is nil")
+		}
+
+		if receivedMsg.Type != core.MessageTypeCommand {
+			t.Errorf("Type = %v, want %v", receivedMsg.Type, core.MessageTypeCommand)
+		}
+
+		if receivedMsg.Content != "/mode yolo" {
+			t.Errorf("Content = %v, want '/mode yolo'", receivedMsg.Content)
+		}
+	})
+
+	t.Run("plain text remains MessageTypeText", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+
+		var receivedMsg *core.Message
+		router.Register(core.MessageTypeText, func(ctx context.Context, msg *core.Message) error {
+			receivedMsg = msg
+			return nil
+		})
+
+		adapter := NewAdapter(mockClient, router)
+
+		event := &MessageReceiveEvent{
+			EventID:     "evt_text_001",
+			MessageID:   "msg_text_001",
+			MessageType: "text",
+			Content:     `{"text":"Hello world"}`,
+			ChatID:      "oc_chat",
+			ChatType:    "p2p",
+			Sender:      SenderInfo{OpenID: "ou_user"},
+			CreateTime:  time.Now(),
+		}
+
+		err := adapter.HandleEvent(context.Background(), event)
+		if err != nil {
+			t.Errorf("HandleEvent() error = %v", err)
+		}
+
+		if receivedMsg == nil {
+			t.Fatal("receivedMsg is nil")
+		}
+
+		if receivedMsg.Type != core.MessageTypeText {
+			t.Errorf("Type = %v, want %v", receivedMsg.Type, core.MessageTypeText)
+		}
+	})
+
+	t.Run("text with leading space not converted to command", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+
+		var receivedMsg *core.Message
+		router.Register(core.MessageTypeText, func(ctx context.Context, msg *core.Message) error {
+			receivedMsg = msg
+			return nil
+		})
+
+		adapter := NewAdapter(mockClient, router)
+
+		event := &MessageReceiveEvent{
+			EventID:     "evt_space_001",
+			MessageID:   "msg_space_001",
+			MessageType: "text",
+			Content:     `{"text":" /mode"}`,
+			ChatID:      "oc_chat",
+			ChatType:    "p2p",
+			Sender:      SenderInfo{OpenID: "ou_user"},
+			CreateTime:  time.Now(),
+		}
+
+		err := adapter.HandleEvent(context.Background(), event)
+		if err != nil {
+			t.Errorf("HandleEvent() error = %v", err)
+		}
+
+		if receivedMsg == nil {
+			t.Fatal("receivedMsg is nil")
+		}
+
+		// Should remain as text since it has leading space
+		if receivedMsg.Type != core.MessageTypeText {
+			t.Errorf("Type = %v, want %v (not a command due to leading space)", receivedMsg.Type, core.MessageTypeText)
+		}
+	})
+
+	t.Run("help command converted to MessageTypeCommand", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+
+		var receivedMsg *core.Message
+		router.Register(core.MessageTypeCommand, func(ctx context.Context, msg *core.Message) error {
+			receivedMsg = msg
+			return nil
+		})
+
+		adapter := NewAdapter(mockClient, router)
+
+		event := &MessageReceiveEvent{
+			EventID:     "evt_help_001",
+			MessageID:   "msg_help_001",
+			MessageType: "text",
+			Content:     `{"text":"/help"}`,
+			ChatID:      "oc_chat",
+			ChatType:    "p2p",
+			Sender:      SenderInfo{OpenID: "ou_user"},
+			CreateTime:  time.Now(),
+		}
+
+		err := adapter.HandleEvent(context.Background(), event)
+		if err != nil {
+			t.Errorf("HandleEvent() error = %v", err)
+		}
+
+		if receivedMsg == nil {
+			t.Fatal("receivedMsg is nil")
+		}
+
+		if receivedMsg.Type != core.MessageTypeCommand {
+			t.Errorf("Type = %v, want %v", receivedMsg.Type, core.MessageTypeCommand)
+		}
+	})
+}

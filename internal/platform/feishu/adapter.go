@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/smy-101/cc-connect/internal/core"
+	"github.com/smy-101/cc-connect/internal/core/command"
 )
 
 // Adapter integrates Feishu client with the message router.
@@ -56,6 +57,11 @@ func (a *Adapter) HandleEvent(ctx context.Context, event *MessageReceiveEvent) e
 	msg, err := a.converter.ToUnifiedMessage(event)
 	if err != nil {
 		return fmt.Errorf("failed to convert event: %w", err)
+	}
+
+	// Detect slash commands: convert text messages starting with '/' to command type
+	if msg.Type == core.MessageTypeText && command.IsCommand(msg.Content) {
+		msg.Type = core.MessageTypeCommand
 	}
 
 	// Route the message
