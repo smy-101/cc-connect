@@ -18,11 +18,11 @@ func TestSendTextMessage(t *testing.T) {
 	sender := NewSender(mockClient)
 
 	tests := []struct {
-		name       string
-		chatID     string
-		content    string
-		setupMock  func()
-		wantErr    bool
+		name      string
+		chatID    string
+		content   string
+		setupMock func()
+		wantErr   bool
 	}{
 		{
 			name:    "send simple text message",
@@ -164,6 +164,28 @@ func TestSendTextWithConverter(t *testing.T) {
 			t.Error("SendMessage() should fail with nil message")
 		}
 	})
+}
+
+func TestSendUnifiedMessage(t *testing.T) {
+	mockClient := NewMockClient()
+	sender := NewSender(mockClient)
+
+	msg := &core.Message{
+		ID:        "msg_unified_001",
+		Platform:  "feishu",
+		UserID:    "ou_test",
+		ChannelID: "oc_unified_chat",
+		Content:   "Hello from SendUnifiedMessage",
+		Type:      core.MessageTypeText,
+		Timestamp: time.Now(),
+	}
+
+	if err := sender.SendUnifiedMessage(context.Background(), msg); err != nil {
+		t.Fatalf("SendUnifiedMessage() error = %v", err)
+	}
+	if mockClient.LastSendTextChatID != "oc_unified_chat" {
+		t.Fatalf("LastSendTextChatID = %q", mockClient.LastSendTextChatID)
+	}
 }
 
 func TestSendErrors(t *testing.T) {

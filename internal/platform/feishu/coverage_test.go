@@ -2,6 +2,7 @@ package feishu
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,7 +11,14 @@ import (
 
 func TestSDKClientAdditional(t *testing.T) {
 	t.Run("connect with valid credentials", func(t *testing.T) {
-		client := NewSDKClient("valid_app_id", "valid_app_secret")
+		facade := &fakeSDKFacade{
+			startFunc: func(ctx context.Context, callbacks sdkFacadeCallbacks) error {
+				callbacks.OnReady()
+				<-ctx.Done()
+				return nil
+			},
+		}
+		client := newSDKClientWithFacade("valid_app_id", "valid_app_secret", facade)
 
 		ctx := context.Background()
 		err := client.Connect(ctx)
@@ -26,7 +34,7 @@ func TestSDKClientAdditional(t *testing.T) {
 	})
 
 	t.Run("connect with empty credentials fails", func(t *testing.T) {
-		client := NewSDKClient("", "")
+		client := newSDKClientWithFacade("", "", &fakeSDKFacade{})
 
 		ctx := context.Background()
 		err := client.Connect(ctx)
@@ -36,7 +44,7 @@ func TestSDKClientAdditional(t *testing.T) {
 	})
 
 	t.Run("disconnect without connect", func(t *testing.T) {
-		client := NewSDKClient("app_id", "app_secret")
+		client := newSDKClientWithFacade("app_id", "app_secret", &fakeSDKFacade{})
 
 		err := client.Disconnect()
 		if err != nil {
@@ -45,7 +53,14 @@ func TestSDKClientAdditional(t *testing.T) {
 	})
 
 	t.Run("double connect", func(t *testing.T) {
-		client := NewSDKClient("app_id", "app_secret")
+		facade := &fakeSDKFacade{
+			startFunc: func(ctx context.Context, callbacks sdkFacadeCallbacks) error {
+				callbacks.OnReady()
+				<-ctx.Done()
+				return nil
+			},
+		}
+		client := newSDKClientWithFacade("app_id", "app_secret", facade)
 
 		ctx := context.Background()
 		_ = client.Connect(ctx)
@@ -58,17 +73,24 @@ func TestSDKClientAdditional(t *testing.T) {
 	})
 
 	t.Run("send without connection fails", func(t *testing.T) {
-		client := NewSDKClient("app_id", "app_secret")
+		client := newSDKClientWithFacade("app_id", "app_secret", &fakeSDKFacade{})
 
 		ctx := context.Background()
 		err := client.SendText(ctx, "oc_chat", "Hello")
-		if err == nil {
-			t.Error("SendText() should fail without connection")
+		if !errors.Is(err, ErrClientNotReady) {
+			t.Errorf("SendText() error = %v, want %v", err, ErrClientNotReady)
 		}
 	})
 
 	t.Run("send with connection succeeds", func(t *testing.T) {
-		client := NewSDKClient("app_id", "app_secret")
+		facade := &fakeSDKFacade{
+			startFunc: func(ctx context.Context, callbacks sdkFacadeCallbacks) error {
+				callbacks.OnReady()
+				<-ctx.Done()
+				return nil
+			},
+		}
+		client := newSDKClientWithFacade("app_id", "app_secret", facade)
 
 		ctx := context.Background()
 		_ = client.Connect(ctx)
@@ -82,7 +104,7 @@ func TestSDKClientAdditional(t *testing.T) {
 	})
 
 	t.Run("on event registration", func(t *testing.T) {
-		client := NewSDKClient("app_id", "app_secret")
+		client := newSDKClientWithFacade("app_id", "app_secret", &fakeSDKFacade{})
 
 		handler := func(ctx context.Context, event *MessageReceiveEvent) error {
 			return nil

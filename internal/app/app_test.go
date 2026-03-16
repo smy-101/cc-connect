@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/smy-101/cc-connect/internal/core"
+	"github.com/smy-101/cc-connect/internal/platform/feishu"
 )
 
 // TestReplySenderInterface tests that ReplySender is correctly defined
@@ -440,7 +441,14 @@ func createTestApp() (*App, error) {
 			},
 		},
 	}
-	return New(config)
+	application, err := New(config)
+	if err != nil {
+		return nil, err
+	}
+	application.feishuClientFactory = func(appID, appSecret string) feishu.FeishuClient {
+		return feishu.NewMockClient()
+	}
+	return application, nil
 }
 
 // =============================================================================

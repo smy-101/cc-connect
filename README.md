@@ -126,6 +126,14 @@ export FEISHU_APP_ID="your-app-id"
 export FEISHU_APP_SECRET="your-app-secret"
 ```
 
+4. 先启动 cc-connect，等它真正建立飞书长连接后，再继续飞书后台事件订阅配置：
+
+```bash
+./cc-connect -config ./config.toml
+```
+
+启动成功时会先输出“进程已启动，正在等待飞书长连接就绪”，随后输出 `Feishu long connection ready`。只有看到这条 ready 日志，才说明可以进入飞书开放平台继续完成事件订阅配置；如果凭证错误或连接失败，进程会直接退出，不会输出 ready。
+
 ### 运行
 
 ```bash
@@ -138,6 +146,14 @@ export FEISHU_APP_SECRET="your-app-secret"
 # 查看版本信息
 ./cc-connect --version
 ```
+
+### 飞书接入顺序
+
+1. 在本地准备好 `config.toml`、Claude Code CLI 和飞书应用凭证。
+2. 启动 cc-connect，等待日志出现 `Feishu long connection ready`。
+3. 打开飞书开放平台，继续补全事件订阅和发布配置。
+4. 在飞书中给机器人发送文本消息，验证消息接收与回复。
+5. 如需真实 API 验证，参考 [docs/feishu-real-integration-checklist.md](docs/feishu-real-integration-checklist.md) 中的 `integration` 测试命令。
 
 ## 斜杠命令
 
@@ -171,6 +187,12 @@ go test ./... -cover
 
 # 运行特定包的测试
 go test ./internal/app/... -v
+
+# 运行飞书核心测试并查看覆盖率
+go test ./internal/platform/feishu/... -v -cover
+
+# 运行真实飞书集成测试（需要环境变量，默认不会触发）
+go test ./internal/platform/feishu/... -tags=integration -v
 
 # 运行 E2E 测试
 go test ./test/e2e/... -v
@@ -246,7 +268,8 @@ go test ./test/e2e/... -v
 
 1. 检查 `app_id` 和 `app_secret` 是否正确
 2. 确认飞书应用已启用 WebSocket 长连接
-3. 检查网络连接是否正常
+3. 确认启动日志已经出现 `Feishu long connection ready`，再继续飞书后台事件配置
+4. 检查网络连接是否正常
 
 ### Q: Claude Code 启动失败？
 

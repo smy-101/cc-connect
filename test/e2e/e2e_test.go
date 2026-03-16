@@ -7,6 +7,7 @@ import (
 
 	"github.com/smy-101/cc-connect/internal/app"
 	"github.com/smy-101/cc-connect/internal/core"
+	"github.com/smy-101/cc-connect/internal/platform/feishu"
 )
 
 // TestE2ETextMessageFlow tests the complete text message flow.
@@ -78,6 +79,9 @@ func TestE2ECommandMessageFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create app: %v", err)
 	}
+	application.SetFeishuClientFactory(func(appID, appSecret string) feishu.FeishuClient {
+		return feishu.NewMockClient()
+	})
 
 	// Test that command handler is registered after app starts
 	ctx := context.Background()
@@ -182,6 +186,9 @@ func TestE2EGracefulShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create app: %v", err)
 	}
+	application.SetFeishuClientFactory(func(appID, appSecret string) feishu.FeishuClient {
+		return feishu.NewMockClient()
+	})
 
 	// Start app
 	ctx := context.Background()

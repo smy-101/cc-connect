@@ -64,11 +64,12 @@ func main() {
 
 	// Start application
 	slog.Info("Starting cc-connect", "version", version)
+	slog.Info("Process initialized, waiting for Feishu long connection readiness")
 	if err := application.Start(ctx); err != nil {
 		slog.Error("Failed to start application", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("Application started successfully")
+	slog.Info("Feishu long connection ready", "next_step", "continue event subscription setup in Feishu Open Platform")
 
 	// Wait for shutdown signal
 	sig := <-sigChan

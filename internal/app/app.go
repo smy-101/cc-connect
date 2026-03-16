@@ -54,10 +54,11 @@ type App struct {
 	agentCfg *AgentConfig
 
 	// Core components
-	router   *core.Router
-	agent    agent.Agent
-	feishu   *feishu.Adapter
-	executor *command.Executor
+	router              *core.Router
+	agent               agent.Agent
+	feishu              *feishu.Adapter
+	executor            *command.Executor
+	feishuClientFactory func(appID, appSecret string) feishu.FeishuClient
 
 	// Lifecycle management
 	ctx    context.Context
@@ -72,10 +73,10 @@ type App struct {
 
 // AgentConfig holds agent configuration options.
 type AgentConfig struct {
-	WorkingDir      string
-	PermissionMode  agent.PermissionMode
-	AgentTimeout    time.Duration
-	SessionConfig   core.SessionConfig
+	WorkingDir     string
+	PermissionMode agent.PermissionMode
+	AgentTimeout   time.Duration
+	SessionConfig  core.SessionConfig
 }
 
 // New creates a new App instance with the given configuration.
@@ -123,6 +124,9 @@ func New(config *core.AppConfig) (*App, error) {
 		executor:     executor,
 		status:       AppStatusIdle,
 		agentTimeout: agentCfg.AgentTimeout,
+		feishuClientFactory: func(appID, appSecret string) feishu.FeishuClient {
+			return feishu.NewSDKClient(appID, appSecret)
+		},
 	}, nil
 }
 
@@ -202,10 +206,10 @@ func createAgentConfig(project *core.ProjectConfig) (*AgentConfig, error) {
 	mode := parsePermissionMode(project.ClaudeCode.DefaultPermissionMode)
 
 	return &AgentConfig{
-		WorkingDir:    project.WorkingDir,
+		WorkingDir:     project.WorkingDir,
 		PermissionMode: mode,
-		AgentTimeout:  5 * time.Minute, // Default timeout
-		SessionConfig: project.GetSessionConfig(),
+		AgentTimeout:   5 * time.Minute, // Default timeout
+		SessionConfig:  project.GetSessionConfig(),
 	}, nil
 }
 
@@ -247,6 +251,16 @@ func (a *App) Agent() agent.Agent {
 	return a.agent
 }
 
+// SetFeishuClientFactory overrides the Feishu client factory.
+// It is primarily used by tests to avoid real network dependencies.
+func (a *App) SetFeishuClientFactory(factory func(appID, appSecret string) feishu.FeishuClient) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if factory != nil {
+		a.feishuClientFactory = factory
+	}
+}
+
 // Start starts the application by starting the Agent, connecting to Feishu,
 // and registering message handlers.
 func (a *App) Start(ctx context.Context) error {
@@ -266,7 +280,7 @@ func (a *App) Start(ctx context.Context) error {
 	}
 
 	// Create Feishu client and adapter
-	feishuClient := feishu.NewSDKClient(a.project.Feishu.AppID, a.project.Feishu.AppSecret)
+	feishuClient := a.feishuClientFactory(a.project.Feishu.AppID, a.project.Feishu.AppSecret)
 	a.feishu = feishu.NewAdapter(feishuClient, a.router)
 
 	// Register handlers before connecting
