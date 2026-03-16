@@ -53,6 +53,14 @@ func (r *Router) HasHandler(mt MessageType) bool {
 	return ok
 }
 
+// HasSessionHandler 检查是否已注册带会话的处理器
+func (r *Router) HasSessionHandler(mt MessageType) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.sessionHandlers[mt]
+	return ok
+}
+
 // Register 注册处理器
 func (r *Router) Register(mt MessageType, h Handler) error {
 	if h == nil {
