@@ -403,3 +403,205 @@ func TestStopIdleAgent(t *testing.T) {
 		t.Errorf("result message should indicate agent not running, got: %q", result.Message)
 	}
 }
+
+// /project command tests
+
+// newTestExecutorWithRouter creates an executor with a ProjectRouter for testing
+func newTestExecutorWithRouter() (*Executor, *core.ProjectRouter, *claudecode.MockAgent) {
+	// Create project configs
+	configs := []core.ProjectConfig{
+		{Name: "frontend", WorkingDir: "/tmp/frontend"},
+		{Name: "backend", WorkingDir: "/tmp/backend"},
+		{Name: "devops", WorkingDir: "/tmp/devops"},
+	}
+
+	// Create mock agent factory
+	var mockAgent *claudecode.MockAgent
+	factory := func(cfg *core.ProjectConfig) (agent.Agent, error) {
+		mockAgent = claudecode.NewMockAgent(&claudecode.Config{WorkingDir: cfg.WorkingDir})
+		return mockAgent, nil
+	}
+
+	// Create router
+	router, _ := core.NewProjectRouter(configs, factory)
+	router.SetActiveProject("frontend")
+
+	// Create executor with router
+	executor := NewExecutorWithRouter(router)
+
+	return executor, router, mockAgent
+}
+
+func TestProjectNoArgs(t *testing.T) {
+	executor, router, _ := newTestExecutorWithRouter()
+	ctx := context.Background()
+	msg := core.NewCommandMessage("feishu", "user123", "/project")
+
+	cmd := Command{Name: "project", Args: []string{}}
+	result := executor.Execute(ctx, cmd, msg)
+
+	// Should not return error
+	if result.IsError() {
+		t.Errorf("/project should not return error, got: %v", result.Error)
+	}
+
+	// Should list all projects
+	if !strings.Contains(result.Message, "frontend") {
+		t.Errorf("result message should contain 'frontend', got: %q", result.Message)
+	}
+	if !strings.Contains(result.Message, "backend") {
+		t.Errorf("result message should contain 'backend', got: %q", result.Message)
+	}
+	if !strings.Contains(result.Message, "devops") {
+		t.Errorf("result message should contain 'devops', got: %q", result.Message)
+	}
+
+	// Should mark current project
+	active := router.ActiveProject()
+	if active == nil || active.Name != "frontend" {
+		t.Errorf("active project should be frontend, got: %v", active)
+	}
+}
+
+func TestProjectSwitchToExisting(t *testing.T) {
+	executor, router, _ := newTestExecutorWithRouter()
+	ctx := context.Background()
+	msg := core.NewCommandMessage("feishu", "user123", "/project backend")
+
+	cmd := Command{Name: "project", Args: []string{"backend"}}
+	result := executor.Execute(ctx, cmd, msg)
+
+	// Should not return error
+	if result.IsError() {
+		t.Errorf("/project backend should not return error, got: %v", result.Error)
+	}
+
+	// Should switch to backend
+	active := router.ActiveProject()
+	if active == nil || active.Name != "backend" {
+		t.Errorf("active project should be backend, got: %v", active)
+	}
+
+	// Success message
+	if !strings.Contains(result.Message, "backend") {
+		t.Errorf("result message should contain 'backend', got: %q", result.Message)
+	}
+}
+
+func TestProjectSwitchToNonExisting(t *testing.T) {
+	executor, router, _ := newTestExecutorWithRouter()
+	ctx := context.Background()
+	msg := core.NewCommandMessage("feishu", "user123", "/project unknown")
+
+	cmd := Command{Name: "project", Args: []string{"unknown"}}
+	result := executor.Execute(ctx, cmd, msg)
+
+	// Should return error
+	if !result.IsError() {
+		t.Error("/project unknown should return error")
+	}
+
+	// Active project should remain unchanged
+	active := router.ActiveProject()
+	if active == nil || active.Name != "frontend" {
+		t.Errorf("active project should still be frontend, got: %v", active)
+	}
+
+	// Should list available projects
+	if !strings.Contains(result.Message, "frontend") || !strings.Contains(result.Message, "backend") {
+		t.Errorf("result message should list available projects, got: %q", result.Message)
+	}
+}
+
+func TestProjectSwitchToCurrent(t *testing.T) {
+	executor, _, _ := newTestExecutorWithRouter()
+	ctx := context.Background()
+	msg := core.NewCommandMessage("feishu", "user123", "/project frontend")
+
+	cmd := Command{Name: "project", Args: []string{"frontend"}}
+	result := executor.Execute(ctx, cmd, msg)
+
+	// Should not return error (just info message)
+	if result.IsError() {
+		t.Errorf("/project frontend should not return error, got: %v", result.Error)
+	}
+
+	// Should indicate already current
+	if !strings.Contains(result.Message, "当前") {
+		t.Errorf("result message should indicate already current, got: %q", result.Message)
+	}
+}
+
+func TestProjectSwitchWithKeepFlag(t *testing.T) {
+	executor, router, _ := newTestExecutorWithRouter()
+	ctx := context.Background()
+
+	// Create sessions in frontend project
+	frontend, _ := router.GetProject("frontend")
+	frontend.Sessions().GetOrCreate("session1")
+	frontend.Sessions().GetOrCreate("session2")
+
+	// Switch with --keep flag
+	msg := core.NewCommandMessage("feishu", "user123", "/project backend --keep")
+	cmd := Command{Name: "project", Args: []string{"backend"}, Flags: map[string]string{"keep": "true"}}
+	result := executor.Execute(ctx, cmd, msg)
+
+	// Should not return error
+	if result.IsError() {
+		t.Errorf("/project backend --keep should not return error, got: %v", result.Error)
+	}
+
+	// Frontend sessions should be preserved
+	if len(frontend.Sessions().List()) != 2 {
+		t.Errorf("frontend should still have 2 sessions, got: %d", len(frontend.Sessions().List()))
+	}
+}
+
+func TestProjectSwitchWithShortKeepFlag(t *testing.T) {
+	executor, router, _ := newTestExecutorWithRouter()
+	ctx := context.Background()
+
+	// Create sessions in frontend project
+	frontend, _ := router.GetProject("frontend")
+	frontend.Sessions().GetOrCreate("session1")
+
+	// Switch with -k flag
+	msg := core.NewCommandMessage("feishu", "user123", "/project backend -k")
+	cmd := Command{Name: "project", Args: []string{"backend"}, Flags: map[string]string{"k": "true"}}
+	result := executor.Execute(ctx, cmd, msg)
+
+	// Should not return error
+	if result.IsError() {
+		t.Errorf("/project backend -k should not return error, got: %v", result.Error)
+	}
+
+	// Frontend sessions should be preserved
+	if len(frontend.Sessions().List()) != 1 {
+		t.Errorf("frontend should still have 1 session, got: %d", len(frontend.Sessions().List()))
+	}
+}
+
+func TestProjectSwitchWithoutKeepClearsSessions(t *testing.T) {
+	executor, router, _ := newTestExecutorWithRouter()
+	ctx := context.Background()
+
+	// Create sessions in frontend project
+	frontend, _ := router.GetProject("frontend")
+	frontend.Sessions().GetOrCreate("session1")
+	frontend.Sessions().GetOrCreate("session2")
+
+	// Switch without --keep flag
+	msg := core.NewCommandMessage("feishu", "user123", "/project backend")
+	cmd := Command{Name: "project", Args: []string{"backend"}}
+	result := executor.Execute(ctx, cmd, msg)
+
+	// Should not return error
+	if result.IsError() {
+		t.Errorf("/project backend should not return error, got: %v", result.Error)
+	}
+
+	// Frontend sessions should be cleared
+	if len(frontend.Sessions().List()) != 0 {
+		t.Errorf("frontend should have 0 sessions after switch, got: %d", len(frontend.Sessions().List()))
+	}
+}
