@@ -2,9 +2,19 @@ package claudecode
 
 import "strings"
 
+// Event types for streaming events from Claude Code CLI
+const (
+	EventTypeSystem            = "system"
+	EventTypeAssistant         = "assistant"
+	EventTypeUser              = "user"
+	EventTypeResult            = "result"
+	EventTypeControlRequest    = "control_request"
+	EventTypeControlCancel     = "control_cancel_request"
+)
+
 // StreamEvent represents a parsed streaming event from Claude Code CLI
 type StreamEvent struct {
-	// Type is the event type: system, assistant, user, result
+	// Type is the event type: system, assistant, user, result, control_request, control_cancel_request
 	Type string `json:"type"`
 	// Subtype is the event subtype (e.g., init, success, error)
 	Subtype string `json:"subtype,omitempty"`
@@ -30,6 +40,22 @@ type StreamEvent struct {
 	DurationMs int64 `json:"duration_ms,omitempty"`
 	// PermissionDenials contains denied tool requests
 	PermissionDenials []PermissionDenial `json:"permission_denials,omitempty"`
+
+	// Control request fields (for permission prompts)
+	// RequestID is the unique identifier for control_request events
+	RequestID string `json:"request_id,omitempty"`
+	// Request contains the control request details
+	Request *ControlRequest `json:"request,omitempty"`
+}
+
+// ControlRequest represents a control request from Claude Code (e.g., permission prompts)
+type ControlRequest struct {
+	// Subtype is the type of control request (e.g., "can_use_tool")
+	Subtype string `json:"subtype,omitempty"`
+	// ToolName is the name of the tool being requested (for can_use_tool)
+	ToolName string `json:"tool_name,omitempty"`
+	// ToolInput is the input for the tool (for can_use_tool)
+	ToolInput map[string]interface{} `json:"input,omitempty"`
 }
 
 // Message represents a message in assistant/user events
@@ -104,6 +130,34 @@ func (e *StreamEvent) IsResultError() bool {
 // HasPermissionDenials returns true if this event has permission denials
 func (e *StreamEvent) HasPermissionDenials() bool {
 	return len(e.PermissionDenials) > 0
+}
+
+// IsControlRequest returns true if this is a control_request event
+func (e *StreamEvent) IsControlRequest() bool {
+	return e.Type == EventTypeControlRequest
+}
+
+// IsControlCancel returns true if this is a control_cancel_request event
+func (e *StreamEvent) IsControlCancel() bool {
+	return e.Type == EventTypeControlCancel
+}
+
+// GetRequestID returns the request ID for control_request events
+func (e *StreamEvent) GetRequestID() string {
+	return e.RequestID
+}
+
+// HasPermissionRequest returns true if this event is a permission request
+func (e *StreamEvent) HasPermissionRequest() bool {
+	return e.IsControlRequest() && e.Request != nil && e.Request.Subtype == "can_use_tool"
+}
+
+// GetToolName returns the tool name for permission request events
+func (e *StreamEvent) GetToolName() string {
+	if e.Request != nil {
+		return e.Request.ToolName
+	}
+	return ""
 }
 
 // GetText returns the text content for assistant text events

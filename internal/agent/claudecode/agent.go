@@ -3,13 +3,11 @@ package claudecode
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/smy-101/cc-connect/internal/agent"
 )
 
@@ -29,10 +27,10 @@ type ClaudeCodeAgent struct {
 	sessionID      string
 	permissionMode agent.PermissionMode
 	status         agent.AgentStatus
-	pm             *ProcessManager
+	session        *Session // Persistent session for bidirectional communication
 	mu             sync.RWMutex
-	busy           bool // true when a SendMessage is in progress
-	sessionStarted bool // true if we've created at least one session
+	sessionMu      sync.Mutex // Protects session access
+	busy           bool       // true when a SendMessage is in progress
 }
 
 // NewAgent creates a new Claude Code agent
@@ -41,11 +39,9 @@ func NewAgent(config *Config) (*ClaudeCodeAgent, error) {
 		return nil, fmt.Errorf("working directory is required")
 	}
 
-	// Generate session ID if not provided
+	// Use provided session ID for resuming, or empty for new session
+	// Claude will generate a session ID when the session starts
 	sessionID := config.SessionID
-	if sessionID == "" {
-		sessionID = uuid.New().String()
-	}
 
 	// Default permission mode
 	permMode := config.PermissionMode
@@ -89,10 +85,32 @@ func (a *ClaudeCodeAgent) Start(ctx context.Context) error {
 		return agent.ErrAgentAlreadyRunning
 	}
 
-	// Don't start the main process in -p mode without a message
-	// The process will be created on-demand in SendMessage
-	slog.Debug("Agent started (no persistent process)", "session_id", a.sessionID)
+	// Create a new session with stream mode
+	// Only pass SessionID if it's a resume (has existing session to resume)
+	// For new sessions, let Claude generate the session ID
+	sessionConfig := &SessionConfig{
+		WorkingDir:     a.config.WorkingDir,
+		ClaudePath:     a.config.ClaudePath,
+		SessionID:      a.sessionID, // Will be empty for new sessions
+		PermissionMode: PermissionModeToCLIArg(a.permissionMode),
+		AutoApprove:    a.permissionMode == agent.PermissionModeBypassPermissions,
+		AllowedTools:   a.config.AllowedTools,
+		Env:            a.config.Env,
+	}
+
+	session, err := newSession(ctx, sessionConfig)
+	if err != nil {
+		a.status = agent.AgentStatusError
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+
+	a.sessionMu.Lock()
+	a.session = session
+	// Update session ID from the created session
+	a.sessionID = session.CurrentSessionID()
+	a.sessionMu.Unlock()
 	a.status = agent.AgentStatusRunning
+	slog.Debug("Agent started with persistent session", "session_id", a.sessionID)
 	return nil
 }
 
@@ -105,11 +123,14 @@ func (a *ClaudeCodeAgent) Stop() error {
 		return nil
 	}
 
-	if a.pm != nil {
-		if err := a.pm.Stop(); err != nil {
-			return err
+	a.sessionMu.Lock()
+	if a.session != nil {
+		if err := a.session.Close(); err != nil {
+			slog.Warn("Error closing session", "error", err)
 		}
+		a.session = nil
 	}
+	a.sessionMu.Unlock()
 
 	a.status = agent.AgentStatusStopped
 	return nil
@@ -124,8 +145,8 @@ func (a *ClaudeCodeAgent) Restart(ctx context.Context) error {
 		return agent.ErrAgentNotRunning
 	}
 
-	// Mark for resume
-	a.pm.config.Resume = true
+	// Get current session ID for resume
+	currentSessionID := a.sessionID
 	a.mu.Unlock()
 
 	// Stop and start
@@ -133,6 +154,8 @@ func (a *ClaudeCodeAgent) Restart(ctx context.Context) error {
 		return fmt.Errorf("failed to stop: %w", err)
 	}
 
+	// Update session ID to resume from previous session
+	a.sessionID = currentSessionID
 	return a.Start(ctx)
 }
 
@@ -141,38 +164,48 @@ func (a *ClaudeCodeAgent) SetPermissionMode(mode agent.PermissionMode) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.status != agent.AgentStatusRunning {
-		// Just update the mode, will be used on next start
-		a.permissionMode = mode
-		return nil
-	}
-
-	// Need to restart to change mode
+	// Update mode
 	oldMode := a.permissionMode
 	a.permissionMode = mode
 
-	// Restart the process with new mode
-	pmConfig := &ProcessConfig{
-		SessionID:      a.sessionID,
+	if a.status != agent.AgentStatusRunning {
+		// Mode will be used on next start
+		return nil
+	}
+
+	// Close current session
+	a.sessionMu.Lock()
+	if a.session != nil {
+		if err := a.session.Close(); err != nil {
+			slog.Warn("Error closing session during mode change", "error", err)
+		}
+		a.session = nil
+	}
+	a.sessionMu.Unlock()
+
+	// Create new session with new mode
+	sessionConfig := &SessionConfig{
 		WorkingDir:     a.config.WorkingDir,
-		PermissionMode: mode,
-		Resume:         true, // Resume to keep context
 		ClaudePath:     a.config.ClaudePath,
+		SessionID:      a.sessionID, // Resume existing session
+		PermissionMode: PermissionModeToCLIArg(mode),
+		AutoApprove:    mode == agent.PermissionModeBypassPermissions,
 		AllowedTools:   a.config.AllowedTools,
 		Env:            a.config.Env,
 	}
 
-	if err := a.pm.Stop(); err != nil {
+	session, err := newSession(context.Background(), sessionConfig)
+	if err != nil {
 		a.permissionMode = oldMode // Revert on error
-		return fmt.Errorf("failed to stop process: %w", err)
+		a.status = agent.AgentStatusError
+		return fmt.Errorf("failed to create session with new mode: %w", err)
 	}
 
-	a.pm = NewProcessManager(pmConfig)
-	if err := a.pm.Start(context.Background()); err != nil {
-		a.permissionMode = oldMode // Revert on error
-		return fmt.Errorf("failed to start process: %w", err)
-	}
+	a.sessionMu.Lock()
+	a.session = session
+	a.sessionMu.Unlock()
 
+	slog.Debug("Permission mode changed", "old_mode", oldMode, "new_mode", mode)
 	return nil
 }
 
@@ -182,11 +215,22 @@ func (a *ClaudeCodeAgent) SendMessage(ctx context.Context, content string, handl
 		return nil, agent.ErrEmptyInput
 	}
 
-	a.mu.Lock()
+	a.mu.RLock()
 	if a.status != agent.AgentStatusRunning {
-		a.mu.Unlock()
+		a.mu.RUnlock()
 		return nil, agent.ErrAgentNotRunning
 	}
+	a.mu.RUnlock()
+
+	a.sessionMu.Lock()
+	if a.session == nil || !a.session.Alive() {
+		a.sessionMu.Unlock()
+		return nil, agent.ErrAgentNotRunning
+	}
+	session := a.session
+	a.sessionMu.Unlock()
+
+	a.mu.Lock()
 	if a.busy {
 		a.mu.Unlock()
 		return nil, agent.ErrAgentBusy
@@ -201,175 +245,102 @@ func (a *ClaudeCodeAgent) SendMessage(ctx context.Context, content string, handl
 		a.mu.Unlock()
 	}()
 
-	// Create a new process for this message
-	// Use --session-id for first message, --resume for subsequent messages
-	pmConfig := &ProcessConfig{
-		SessionID:      a.sessionID,
-		WorkingDir:     a.config.WorkingDir,
-		PermissionMode: a.permissionMode,
-		Resume:         a.sessionStarted, // Resume only if we've started a session before
-		ClaudePath:     a.config.ClaudePath,
-		AllowedTools:   a.config.AllowedTools,
-		Env:            a.config.Env,
-		Message:        content,
-	}
-
-	slog.Debug("Starting Claude Code subprocess", "session_id", a.sessionID, "message", content, "resume", a.sessionStarted)
-	pm := NewProcessManager(pmConfig)
-	if err := pm.Start(ctx); err != nil {
-		return nil, fmt.Errorf("failed to start process: %w", err)
-	}
-
-	// Close stdin so Claude CLI sees EOF and starts processing the message.
-	// Without this, Claude waits indefinitely for stdin input in pipe mode.
-	if err := pm.CloseStdin(); err != nil {
-		slog.Warn("Failed to close stdin", "error", err)
-	}
-	stderrReader := pm.Stderr()
-	var stderrOutput []byte
-	var stderrErr error
-	stderrDone := make(chan struct{})
-	if stderrReader != nil {
-		go func() {
-			stderrOutput, stderrErr = io.ReadAll(stderrReader)
-			if len(stderrOutput) > 0 {
-				slog.Debug("Claude stderr output", "output", string(stderrOutput))
-			}
-			close(stderrDone)
-		}()
-	} else {
-		close(stderrDone)
-	}
-
-	// Check if process is still running after a brief moment
-	time.Sleep(100 * time.Millisecond)
-	if !pm.IsRunning() {
-		slog.Error("Claude process exited immediately after starting")
-		// Try to get the exit error
-		waitErr := pm.Wait()
-		<-stderrDone
-		if waitErr != nil {
-			slog.Error("Process exit error", "error", waitErr, "stderr", string(stderrOutput))
-			return nil, fmt.Errorf("claude process exited immediately: %w", waitErr)
-		}
-		return nil, fmt.Errorf("claude process exited immediately with no error")
-	}
-
-	defer pm.Stop()
-
-	// Collect response
+	// Collect response from events via callback
 	response := &agent.Response{}
 	var textBuilder strings.Builder
+	startTime := time.Now()
 
-	// Parse events from stdout with timeout detection
-	slog.Debug("Starting to parse events from stdout")
-	parseDone := make(chan error, 1)
-	go func() {
-		err := ParseFromReader(pm.Stdout(), func(event *StreamEvent) error {
-			// Convert to agent.StreamEvent and call handler
-			agentEvent := convertToAgentEvent(event)
-			if handler != nil {
-				handler(agentEvent)
-			}
+	slog.Debug("Sending message to session", "session_id", a.sessionID, "message_length", len(content))
 
-			if text := event.GetText(); text != "" {
-				preview := text
-				if len(preview) > 50 {
-					preview = preview[:50] + "..."
-				}
-				slog.Debug("Received text from Claude", "text_length", len(text), "text_preview", preview)
-				textBuilder.WriteString(text)
-			}
-
-			// Handle different event types
-			switch {
-			case event.IsSystemInit():
-				slog.Debug("Received system init event", "session_id", event.SessionID)
-				// Extract metadata if needed
-			case event.IsResultSuccess():
-				slog.Debug("Received result success event", "result_length", len(event.Result))
-				response.Content = event.Result
-				if textBuilder.Len() > 0 && response.Content == "" {
-					response.Content = textBuilder.String()
-				}
-				response.CostUSD = event.TotalCostUSD
-				response.Duration = time.Duration(event.DurationMs) * time.Millisecond
-			case event.IsResultError():
-				slog.Error("Received result error event", "error", event.Error)
-				response.IsError = true
-				response.Content = event.Error
-				if event.HasPermissionDenials() {
-					response.PermissionDenied = true
-					response.DeniedTools = make([]agent.DeniedTool, len(event.PermissionDenials))
-					for i, d := range event.PermissionDenials {
-						response.DeniedTools[i] = agent.DeniedTool{
-							ToolName:  d.ToolName,
-							ToolUseID: d.ToolUseID,
-							ToolInput: d.ToolInput,
-						}
-					}
-				}
-			}
-
-			return nil
-		})
-		parseDone <- err
-	}()
-
-	// Wait for parsing to complete or context to cancel
-	select {
-	case err := <-parseDone:
-		if err != nil {
-			slog.Error("Failed to parse events", "error", err)
-			return nil, fmt.Errorf("failed to parse events: %w", err)
+	// Send the message using the session's SendMessage method
+	finalEvent, err := session.SendMessage(ctx, content, nil, nil, func(event Event) {
+		// Convert session event to agent event and call handler
+		agentEvent := convertSessionEventToAgentEvent(event)
+		if handler != nil {
+			handler(agentEvent)
 		}
-		slog.Debug("Finished parsing events", "text_length", textBuilder.Len(), "has_content", response.Content != "")
-	case <-ctx.Done():
-		slog.Warn("Context cancelled while parsing events", "error", ctx.Err())
-		return nil, fmt.Errorf("context cancelled: %w", ctx.Err())
-	}
-	slog.Debug("Waiting for process to exit")
-	waitErr := pm.Wait()
-	<-stderrDone
 
-	// If we already got a parsed response (success or error), return it even if
-	// the process exited with a non-zero status. Claude CLI exits with status 1
-	// for API errors (e.g., 429 rate limit) but still produces valid stream-json output.
-	if response.Content != "" {
-		if waitErr != nil {
-			slog.Warn("Claude process exited with error but response was parsed",
-				"error", waitErr, "content_length", len(response.Content), "is_error", response.IsError)
+		// Accumulate text
+		if event.Type == EventText && event.Content != "" {
+			preview := event.Content
+			if len(preview) > 50 {
+				preview = preview[:50] + "..."
+			}
+			slog.Debug("Received text event", "text_length", len(event.Content), "text_preview", preview)
+			textBuilder.WriteString(event.Content)
 		}
-		// Mark session as started for future calls
-		a.mu.Lock()
-		a.sessionStarted = true
-		a.mu.Unlock()
-		slog.Debug("Returning parsed response", "content_length", len(response.Content), "is_error", response.IsError)
-		return response, nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("session send failed: %w", err)
 	}
 
-	if waitErr != nil {
-		slog.Error("Claude process failed", "error", waitErr, "stderr_error", stderrErr, "stderr_output", string(stderrOutput))
-		if stderrErr != nil {
-			return nil, fmt.Errorf("claude process failed: %w (failed to read stderr: %v)", waitErr, stderrErr)
+	// Process final event
+	if finalEvent != nil {
+		switch finalEvent.Type {
+		case EventResult:
+			slog.Debug("Received result event", "result_length", len(finalEvent.Content))
+			response.Content = finalEvent.Content
+			if textBuilder.Len() > 0 && response.Content == "" {
+				response.Content = textBuilder.String()
+			}
+			response.Duration = time.Since(startTime)
+		case EventError:
+			slog.Error("Received error event", "error", finalEvent.Error)
+			response.IsError = true
+			if finalEvent.Content != "" {
+				response.Content = finalEvent.Content
+			} else if finalEvent.Error != nil {
+				response.Content = finalEvent.Error.Error()
+			}
 		}
-		stderrText := strings.TrimSpace(string(stderrOutput))
-		if stderrText != "" {
-			return nil, fmt.Errorf("claude process failed: %w: %s", waitErr, stderrText)
-		}
-		return nil, fmt.Errorf("claude process failed: %w", waitErr)
 	}
 
-	// Mark session as started for future calls
-	a.mu.Lock()
-	a.sessionStarted = true
-	a.mu.Unlock()
+	// Update session ID if it changed
+	a.sessionMu.Lock()
+	if session := a.session; session != nil {
+		a.sessionID = session.CurrentSessionID()
+	}
+	a.sessionMu.Unlock()
 
-	slog.Debug("Process exited successfully", "content_length", len(response.Content))
+	slog.Debug("SendMessage completed", "content_length", len(response.Content), "is_error", response.IsError)
 	return response, nil
 }
 
+// convertSessionEventToAgentEvent converts a Session Event to agent.StreamEvent
+func convertSessionEventToAgentEvent(event Event) agent.StreamEvent {
+	ae := agent.StreamEvent{}
+
+	switch event.Type {
+	case EventSystem:
+		ae.Type = agent.StreamEventTypeSystem
+	case EventText:
+		ae.Type = agent.StreamEventTypeText
+		ae.Content = event.Content
+	case EventToolUse:
+		ae.Type = agent.StreamEventTypeToolUse
+		ae.Tool = &agent.ToolInfo{
+			Name:  event.ToolName,
+			Input: event.ToolInput,
+		}
+	case EventToolResult:
+		ae.Type = agent.StreamEventTypeToolResult
+	case EventResult:
+		ae.Type = agent.StreamEventTypeResult
+		ae.Content = event.Content
+	case EventError:
+		ae.Type = agent.StreamEventTypeError
+		ae.Content = event.Content
+	case EventPermissionRequest:
+		// Permission requests don't have a direct mapping in agent.StreamEvent
+		// They are handled internally by the session
+	}
+
+	return ae
+}
+
 // convertToAgentEvent converts a claudecode.StreamEvent to agent.StreamEvent
+// This is kept for backward compatibility with tests
 func convertToAgentEvent(event *StreamEvent) agent.StreamEvent {
 	ae := agent.StreamEvent{}
 

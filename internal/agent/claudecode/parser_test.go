@@ -615,3 +615,105 @@ func TestStreamEventTypeChecks(t *testing.T) {
 		}
 	})
 }
+
+// TestParseControlRequest tests parsing of control_request events
+func TestParseControlRequest(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		wantRequestID   string
+		wantSubtype     string
+		wantToolName    string
+		wantHasPermReq  bool
+	}{
+		{
+			name:           "control_request for tool use",
+			input:          `{"type":"control_request","request_id":"req1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls -la"}}}`,
+			wantRequestID:  "req1",
+			wantSubtype:    "can_use_tool",
+			wantToolName:   "Bash",
+			wantHasPermReq: true,
+		},
+		{
+			name:           "control_request without tool_name",
+			input:          `{"type":"control_request","request_id":"req2","request":{"subtype":"other"}}`,
+			wantRequestID:  "req2",
+			wantSubtype:    "other",
+			wantToolName:   "",
+			wantHasPermReq: false,
+		},
+		{
+			name:           "control_cancel_request",
+			input:          `{"type":"control_cancel_request","request_id":"req1"}`,
+			wantRequestID:  "req1",
+			wantSubtype:    "",
+			wantToolName:   "",
+			wantHasPermReq: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event, err := ParseEvent([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("ParseEvent() error = %v", err)
+			}
+
+			if event.RequestID != tt.wantRequestID {
+				t.Errorf("RequestID = %v, want %v", event.RequestID, tt.wantRequestID)
+			}
+
+			if event.Request != nil && event.Request.Subtype != tt.wantSubtype {
+				t.Errorf("Request.Subtype = %v, want %v", event.Request.Subtype, tt.wantSubtype)
+			}
+
+			if event.HasPermissionRequest() != tt.wantHasPermReq {
+				t.Errorf("HasPermissionRequest() = %v, want %v", event.HasPermissionRequest(), tt.wantHasPermReq)
+			}
+
+			if tt.wantToolName != "" && event.GetToolName() != tt.wantToolName {
+				t.Errorf("GetToolName() = %v, want %v", event.GetToolName(), tt.wantToolName)
+			}
+		})
+	}
+}
+
+// TestControlRequestMethod tests IsControlRequest and IsControlCancel methods
+func TestControlRequestMethod(t *testing.T) {
+	tests := []struct {
+		name               string
+		event              *StreamEvent
+		wantIsControlReq   bool
+		wantIsControlCancel bool
+	}{
+		{
+			name:               "control_request event",
+			event:              &StreamEvent{Type: EventTypeControlRequest, RequestID: "req1"},
+			wantIsControlReq:   true,
+			wantIsControlCancel: false,
+		},
+		{
+			name:               "control_cancel_request event",
+			event:              &StreamEvent{Type: EventTypeControlCancel, RequestID: "req1"},
+			wantIsControlReq:   false,
+			wantIsControlCancel: true,
+		},
+		{
+			name:               "assistant event",
+			event:              &StreamEvent{Type: EventTypeAssistant},
+			wantIsControlReq:   false,
+			wantIsControlCancel: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.event.IsControlRequest(); got != tt.wantIsControlReq {
+				t.Errorf("IsControlRequest() = %v, want %v", got, tt.wantIsControlReq)
+			}
+			if got := tt.event.IsControlCancel(); got != tt.wantIsControlCancel {
+				t.Errorf("IsControlCancel() = %v, want %v", got, tt.wantIsControlCancel)
+			}
+		})
+	}
+}
