@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sync"
@@ -32,14 +33,36 @@ func DefaultClaudePath() string {
 
 // ProcessManager manages a Claude Code subprocess
 type ProcessManager struct {
-	config  *ProcessConfig
-	cmd     *exec.Cmd
-	cancel  context.CancelFunc
-	mu      sync.Mutex
-	done    chan error
+	config *ProcessConfig
+	cmd    *exec.Cmd
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	done   chan error
 	stdout io.Reader
 	stdin  io.Writer
 	stderr io.Reader
+}
+
+func (pm *ProcessManager) buildArgs() []string {
+	args := []string{
+		pm.config.ClaudePath,
+		"-p",
+		"--verbose",
+		"--output-format", "stream-json",
+		"--permission-mode", PermissionModeToCLIArg(pm.config.PermissionMode),
+	}
+
+	if pm.config.Resume {
+		args = append(args, "--resume", pm.config.SessionID)
+	} else if pm.config.SessionID != "" {
+		args = append(args, "--session-id", pm.config.SessionID)
+	}
+
+	if pm.config.Message != "" {
+		args = append(args, pm.config.Message)
+	}
+
+	return args
 }
 
 // NewProcessManager creates a new ProcessManager
@@ -55,27 +78,17 @@ func NewProcessManager(config *ProcessConfig) *ProcessManager {
 
 // buildCommand constructs the exec.Cmd for the process
 func (pm *ProcessManager) buildCommand() *exec.Cmd {
-	args := []string{
-		pm.config.ClaudePath, // First arg is the command name
-		"-p",
-		"--output-format", "stream-json",
-		"--session-id", pm.config.SessionID,
-		"--permission-mode", PermissionModeToCLIArg(pm.config.PermissionMode),
-	}
-
-	if pm.config.Resume {
-		args = append(args, "--resume")
-	}
-
-	// Add message as the last argument if provided
-	if pm.config.Message != "" {
-		args = append(args, pm.config.Message)
-	}
-
-	// Build the command using exec.Command function
+	args := pm.buildArgs()
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = pm.config.WorkingDir
 
+	return cmd
+}
+
+func (pm *ProcessManager) buildCommandContext(ctx context.Context) *exec.Cmd {
+	args := pm.buildArgs()
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Dir = pm.config.WorkingDir
 	return cmd
 }
 
@@ -88,7 +101,10 @@ func (pm *ProcessManager) Start(ctx context.Context) error {
 		return agent.ErrAgentAlreadyRunning
 	}
 
-	cmd := pm.buildCommand()
+	processCtx, cancel := context.WithCancel(ctx)
+	cmd := pm.buildCommandContext(processCtx)
+
+	slog.Debug("Building Claude command", "args", cmd.Args, "working_dir", cmd.Dir)
 
 	// Set up environment variables
 	cmd.Env = os.Environ()
@@ -99,14 +115,17 @@ func (pm *ProcessManager) Start(ctx context.Context) error {
 	// Get pipes
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		cancel()
 		return fmt.Errorf("failed to get stdin: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		cancel()
 		return fmt.Errorf("failed to get stdout: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		cancel()
 		return fmt.Errorf("failed to get stderr: %w", err)
 	}
 
@@ -115,18 +134,20 @@ func (pm *ProcessManager) Start(ctx context.Context) error {
 	pm.stderr = stderr
 	pm.cmd = cmd
 
-	// Create cancel context for timeout
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	pm.cancel = cancel
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
+		cancel()
 		return fmt.Errorf("failed to start process: %w", err)
 	}
+
+	slog.Debug("Claude process started", "pid", cmd.Process.Pid, "args", cmd.Args)
 
 	// Monitor process exit in background
 	go func() {
 		err := cmd.Wait()
+		slog.Debug("Claude process exited", "pid", cmd.Process.Pid, "error", err)
 		pm.done <- err
 	}()
 
@@ -140,11 +161,6 @@ func (pm *ProcessManager) Stop() error {
 
 	if pm.cmd == nil || pm.cmd.Process == nil {
 		return nil
-	}
-
-	// Cancel the context
-	if pm.cancel != nil {
-		pm.cancel()
 	}
 
 	// Send SIGTERM
@@ -162,22 +178,29 @@ func (pm *ProcessManager) Stop() error {
 	// Wait for process to exit with timeout
 	select {
 	case <-pm.done:
+		if pm.cancel != nil {
+			pm.cancel()
+		}
 		pm.cmd = nil
 		pm.stdin = nil
 		pm.stdout = nil
 		pm.stderr = nil
+		pm.cancel = nil
 		return nil
 	case <-time.After(2 * time.Second):
 		// Force kill after timeout
+		if pm.cancel != nil {
+			pm.cancel()
+		}
 		if err := pm.cmd.Process.Signal(syscall.SIGKILL); err != nil {
 			// Ignore errors from kill
 		}
 		<-pm.done
-		pm.cmd.Wait()
 		pm.cmd = nil
 		pm.stdin = nil
 		pm.stdout = nil
 		pm.stderr = nil
+		pm.cancel = nil
 		return fmt.Errorf("process did not exit after SIGTERM, killed")
 	}
 }
@@ -223,12 +246,27 @@ func (pm *ProcessManager) IsRunning() bool {
 
 // Wait blocks until the process exits
 func (pm *ProcessManager) Wait() error {
-	select {
-	case <-pm.done:
-		return nil
-	case err := <-pm.done:
-		return err
+	err := <-pm.done
+
+	pm.mu.Lock()
+	pm.cmd = nil
+	pm.stdin = nil
+	pm.stdout = nil
+	pm.stderr = nil
+	pm.cancel = nil
+	pm.mu.Unlock()
+
+	return err
+}
+
+// CloseStdin closes the stdin pipe, signaling EOF to the subprocess.
+// This is necessary when using -p mode with a message argument,
+// since Claude CLI may wait for stdin EOF before processing.
+func (pm *ProcessManager) CloseStdin() error {
+	if closer, ok := pm.stdin.(io.Closer); ok {
+		return closer.Close()
 	}
+	return nil
 }
 
 // Stdin returns the stdin writer

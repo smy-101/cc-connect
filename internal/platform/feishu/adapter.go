@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/smy-101/cc-connect/internal/core"
 	"github.com/smy-101/cc-connect/internal/core/command"
@@ -17,17 +20,22 @@ type Adapter struct {
 	converter *MessageConverter
 	parser    *EventParser
 	sender    *Sender
+
+	// Event deduplication: Feishu may re-deliver events if ACK is slow
+	seenEvents   map[string]time.Time
+	seenEventsMu sync.Mutex
 }
 
 // NewAdapter creates a new Feishu adapter.
 func NewAdapter(client FeishuClient, router *core.Router) *Adapter {
 	converter := NewMessageConverter()
 	return &Adapter{
-		client:    client,
-		router:    router,
-		converter: converter,
-		parser:    NewEventParser(),
-		sender:    NewSenderWithConverter(client, converter),
+		client:     client,
+		router:     router,
+		converter:  converter,
+		parser:     NewEventParser(),
+		sender:     NewSenderWithConverter(client, converter),
+		seenEvents: make(map[string]time.Time),
 	}
 }
 
@@ -53,11 +61,31 @@ func (a *Adapter) HandleEvent(ctx context.Context, event *MessageReceiveEvent) e
 		return errors.New("event is nil")
 	}
 
+	// Deduplicate events: Feishu may re-deliver the same event if ACK was slow
+	if event.EventID != "" {
+		a.seenEventsMu.Lock()
+		if _, seen := a.seenEvents[event.EventID]; seen {
+			a.seenEventsMu.Unlock()
+			slog.Debug("Feishu event deduplicated (already processed)", "event_id", event.EventID)
+			return nil
+		}
+		a.seenEvents[event.EventID] = time.Now()
+		// Evict old entries to prevent memory leak (keep last 10 minutes)
+		for id, ts := range a.seenEvents {
+			if time.Since(ts) > 10*time.Minute {
+				delete(a.seenEvents, id)
+			}
+		}
+		a.seenEventsMu.Unlock()
+	}
+
 	// Convert event to unified message
 	msg, err := a.converter.ToUnifiedMessage(event)
 	if err != nil {
+		slog.Warn("Feishu event conversion failed", append(eventLogFields(event), "error", err)...)
 		return fmt.Errorf("failed to convert event: %w", err)
 	}
+	slog.Debug("Feishu event converted", append(eventLogFields(event), unifiedMessageLogFields(msg)...)...)
 
 	// Detect slash commands: convert text messages starting with '/' to command type
 	if msg.Type == core.MessageTypeText && command.IsCommand(msg.Content) {
@@ -67,11 +95,13 @@ func (a *Adapter) HandleEvent(ctx context.Context, event *MessageReceiveEvent) e
 	// Route the message
 	if err := a.router.Route(ctx, msg); err != nil {
 		if errors.Is(err, core.ErrNoHandler) {
-			// No handler registered, log but don't fail
+			slog.Debug("Feishu message has no registered handler", append(eventLogFields(event), unifiedMessageLogFields(msg)...)...)
 			return nil
 		}
+		slog.Error("Feishu message routing failed", append(append(eventLogFields(event), unifiedMessageLogFields(msg)...), "error", err)...)
 		return fmt.Errorf("failed to route message: %w", err)
 	}
+	slog.Debug("Feishu message routed", append(eventLogFields(event), unifiedMessageLogFields(msg)...)...)
 
 	return nil
 }
@@ -98,7 +128,11 @@ func (a *Adapter) HandleSDKEvent(ctx context.Context, data map[string]any) error
 
 // SendReply sends a text reply to a chat.
 func (a *Adapter) SendReply(ctx context.Context, chatID, content string) error {
-	return a.sender.SendText(ctx, chatID, content)
+	return a.sender.SendMessage(ctx, &core.Message{
+		ChannelID: chatID,
+		Content:   content,
+		Type:      core.MessageTypeText,
+	})
 }
 
 // SendMessage sends a unified message through Feishu.

@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
@@ -88,6 +89,8 @@ func (c *SDKClient) Connect(ctx context.Context) error {
 	facade := c.facade
 	c.mu.Unlock()
 
+	slog.Info("Feishu websocket connecting")
+
 	readyCh := make(chan struct{})
 	readyOnce := sync.Once{}
 	errCh := make(chan error, 1)
@@ -100,6 +103,7 @@ func (c *SDKClient) Connect(ctx context.Context) error {
 					c.state = stateReady
 				}
 				c.mu.Unlock()
+				slog.Info("Feishu websocket ready")
 				readyOnce.Do(func() { close(readyCh) })
 			},
 			OnDisconnected: func(err error) {
@@ -108,6 +112,9 @@ func (c *SDKClient) Connect(ctx context.Context) error {
 					c.state = stateDisconnected
 				}
 				c.mu.Unlock()
+				if err != nil {
+					slog.Warn("Feishu websocket disconnected", "error", err)
+				}
 			},
 			OnMessage: c.handleSDKEvent,
 		})
@@ -149,6 +156,8 @@ func (c *SDKClient) Disconnect() error {
 	c.connectCancel = nil
 	c.mu.Unlock()
 
+	slog.Info("Feishu websocket disconnecting")
+
 	if cancel != nil {
 		cancel()
 	}
@@ -161,6 +170,7 @@ func (c *SDKClient) Disconnect() error {
 	c.mu.Lock()
 	c.state = stateDisconnected
 	c.mu.Unlock()
+	slog.Info("Feishu websocket disconnected")
 	return nil
 }
 
@@ -208,8 +218,11 @@ func (c *SDKClient) handleMessageEvent(ctx context.Context, event *MessageReceiv
 }
 
 func (c *SDKClient) handleSDKEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+	slog.Debug("Feishu SDK event received", sdkEventLogFields(event)...)
+
 	converted, err := convertSDKMessageEvent(event, c.eventSeq.Add(1))
 	if err != nil {
+		slog.Warn("Feishu SDK event conversion failed", append(sdkEventLogFields(event), "error", err)...)
 		return err
 	}
 

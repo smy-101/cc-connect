@@ -3,6 +3,9 @@ package claudecode
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,7 +136,7 @@ func TestAgentSetPermissionMode(t *testing.T) {
 		PermissionMode: agent.PermissionModeDefault,
 	}
 
-	 ag, err := NewAgent(config)
+	ag, err := NewAgent(config)
 	if err != nil {
 		t.Fatalf("NewAgent() error: %v", err)
 	}
@@ -154,13 +157,13 @@ func TestAgentSetPermissionMode(t *testing.T) {
 	// Check mode was changed
 	if ag.CurrentMode() != agent.PermissionModeBypassPermissions {
 		t.Errorf("CurrentMode = %v, want %v", ag.CurrentMode(), agent.PermissionModeBypassPermissions)
-	 }
+	}
 
 	// Session ID should remain the same (resume was used)
-	 originalSessionID := config.SessionID
+	originalSessionID := config.SessionID
 	if ag.SessionID() != originalSessionID {
-	 t.Errorf("SessionID should remain %v, got %v", originalSessionID, ag.SessionID())
-	 }
+		t.Errorf("SessionID should remain %v, got %v", originalSessionID, ag.SessionID())
+	}
 }
 
 // TestAgentCurrentMode tests current mode retrieval
@@ -169,17 +172,17 @@ func TestAgentCurrentMode(t *testing.T) {
 		SessionID:      "test-session-current-mode",
 		WorkingDir:     "/tmp/test",
 		PermissionMode: agent.PermissionModeAcceptEdits,
-    }
+	}
 
-    ag, err := NewAgent(config)
-    if err != nil {
-        t.Fatalf("NewAgent() error: %v", err)
-    }
+	ag, err := NewAgent(config)
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
 
-    // Check initial mode
-    if ag.CurrentMode() != agent.PermissionModeAcceptEdits {
-        t.Errorf("CurrentMode = %v, want %v", ag.CurrentMode(), agent.PermissionModeAcceptEdits)
-    }
+	// Check initial mode
+	if ag.CurrentMode() != agent.PermissionModeAcceptEdits {
+		t.Errorf("CurrentMode = %v, want %v", ag.CurrentMode(), agent.PermissionModeAcceptEdits)
+	}
 }
 
 // TestAgentStatus tests status transitions
@@ -195,31 +198,31 @@ func TestAgentStatus(t *testing.T) {
 		SessionID:      "test-session-status",
 		WorkingDir:     tmpDir,
 		PermissionMode: agent.PermissionModeDefault,
-    }
+	}
 
-    ag, err := NewAgent(config)
-    if err != nil {
-        t.Fatalf("NewAgent() error: %v", err)
-    }
+	ag, err := NewAgent(config)
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
 
-    // Initial status should be idle
-    if ag.Status() != agent.AgentStatusIdle {
-        t.Errorf("Status = %v, want %v", ag.Status(), agent.AgentStatusIdle)
-    }
+	// Initial status should be idle
+	if ag.Status() != agent.AgentStatusIdle {
+		t.Errorf("Status = %v, want %v", ag.Status(), agent.AgentStatusIdle)
+	}
 
-    ctx := context.Background()
+	ctx := context.Background()
 
-    // After start, should be running
-    _ = ag.Start(ctx)
-    if ag.Status() != agent.AgentStatusRunning {
-        t.Errorf("Status = %v, want %v", ag.Status(), agent.AgentStatusRunning)
-    }
+	// After start, should be running
+	_ = ag.Start(ctx)
+	if ag.Status() != agent.AgentStatusRunning {
+		t.Errorf("Status = %v, want %v", ag.Status(), agent.AgentStatusRunning)
+	}
 
-    // After stop, should be stopped
-    _ = ag.Stop()
-    if ag.Status() != agent.AgentStatusStopped {
-        t.Errorf("Status = %v, want %v", ag.Status(), agent.AgentStatusStopped)
-    }
+	// After stop, should be stopped
+	_ = ag.Stop()
+	if ag.Status() != agent.AgentStatusStopped {
+		t.Errorf("Status = %v, want %v", ag.Status(), agent.AgentStatusStopped)
+	}
 }
 
 // TestAgentSendMessageEmptyInput tests SendMessage with empty input
@@ -309,6 +312,102 @@ func TestAgentSendMessageConcurrent(t *testing.T) {
 	if err != agent.ErrAgentBusy {
 		t.Errorf("expected ErrAgentBusy, got %v", err)
 	}
+}
+
+func TestAgentSendMessageFallsBackToAssistantTextWhenResultEmpty(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	mockClaudePath := createTestClaudeScript(t, tmpDir, `#!/bin/bash
+echo '{"type":"system","subtype":"init","session_id":"fallback-test"}'
+echo '{"type":"assistant","session_id":"fallback-test","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file":"README.md"}},{"type":"text","text":"Final answer from text block"}]}}'
+echo '{"type":"result","subtype":"success","session_id":"fallback-test","result":""}'
+sleep 0.1
+`)
+
+	config := &Config{
+		SessionID:      "test-session-fallback-text",
+		WorkingDir:     tmpDir,
+		PermissionMode: agent.PermissionModeDefault,
+		ClaudePath:     mockClaudePath,
+	}
+
+	ag, err := NewAgent(config)
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := ag.Start(ctx); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	defer ag.Stop()
+
+	resp, err := ag.SendMessage(ctx, "hello", nil)
+	if err != nil {
+		t.Fatalf("SendMessage() error: %v", err)
+	}
+
+	if resp.Content != "Final answer from text block" {
+		t.Fatalf("Response.Content = %q, want %q", resp.Content, "Final answer from text block")
+	}
+	if resp.IsError {
+		t.Fatal("Response.IsError = true, want false")
+	}
+}
+
+func TestAgentSendMessageProcessFailureReturnsErrorWithoutPanic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	mockClaudePath := createTestClaudeScript(t, tmpDir, `#!/bin/bash
+last="${@: -1}"
+if [ "$last" = "trigger failure" ]; then
+	printf 'stderr failure details\n' >&2
+	exit 1
+fi
+echo '{"type":"system","subtype":"init","session_id":"send-error-test"}'
+sleep 5
+`)
+
+	config := &Config{
+		SessionID:      "test-session-send-process-error",
+		WorkingDir:     tmpDir,
+		PermissionMode: agent.PermissionModeDefault,
+		ClaudePath:     mockClaudePath,
+	}
+
+	ag, err := NewAgent(config)
+	if err != nil {
+		t.Fatalf("NewAgent() error: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := ag.Start(ctx); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	defer ag.Stop()
+
+	_, err = ag.SendMessage(ctx, "trigger failure", nil)
+	if err == nil {
+		t.Fatal("SendMessage() error = nil, want process failure")
+	}
+	if !strings.Contains(err.Error(), "stderr failure details") {
+		t.Fatalf("SendMessage() error = %v, want stderr details", err)
+	}
+}
+
+func createTestClaudeScript(t *testing.T, dir, content string) string {
+	t.Helper()
+	scriptPath := filepath.Join(dir, "mock-claude.sh")
+	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
+		t.Fatalf("Failed to create mock script: %v", err)
+	}
+	return scriptPath
 }
 
 // TestAgentHealthCheck tests health check functionality
@@ -588,11 +687,11 @@ func TestAgentNewAgentWithEmptyPermissionMode(t *testing.T) {
 // TestConvertToAgentEventAllTypes tests all event type conversions
 func TestConvertToAgentEventAllTypes(t *testing.T) {
 	tests := []struct {
-		name     string
-		event    *StreamEvent
-		wantType agent.StreamEventType
+		name        string
+		event       *StreamEvent
+		wantType    agent.StreamEventType
 		wantContent string
-		wantTool   bool
+		wantTool    bool
 	}{
 		{
 			name:     "unknown type",
@@ -623,8 +722,8 @@ func TestConvertToAgentEventAllTypes(t *testing.T) {
 					}},
 				},
 			},
-			wantType:  agent.StreamEventTypeToolUse,
-			wantTool:  true,
+			wantType: agent.StreamEventTypeToolUse,
+			wantTool: true,
 		},
 		{
 			name: "result success with content",
@@ -717,7 +816,7 @@ func TestAgentConfigFields(t *testing.T) {
 		PermissionMode: agent.PermissionModePlan,
 		ClaudePath:     "/custom/claude",
 		AllowedTools:   []string{"Bash", "Read"},
-		Env:           []string{"CUSTOM_VAR=value"},
+		Env:            []string{"CUSTOM_VAR=value"},
 	}
 
 	ag, err := NewAgent(config)

@@ -58,3 +58,14 @@ go test ./internal/platform/feishu/... -tags=integration -run TestSDKClientInteg
 1. 若启动阶段失败，先核对应用凭证、机器人能力和 WebSocket 长连接是否已开启。
 2. 若没有出现 ready 日志，不要继续飞书后台事件配置，先解决连接问题。
 3. 若能连接但不能回复，优先检查机器人是否在目标群内，以及 `FEISHU_CHAT_ID` 是否正确。
+
+## 如何用 debug 日志定位单聊无响应
+
+1. 先把运行配置中的 `log_level` 调整为 `debug`，然后重新启动 cc-connect。
+2. 如果看不到 `Feishu SDK event received`，问题通常还停留在飞书事件订阅、权限或长连接层。
+3. 如果出现 `Feishu event conversion failed`，说明事件已经到达，但转换成统一消息失败。
+4. 如果出现 `Feishu message routing failed`，说明问题停留在路由或 handler，而不是飞书收消息。
+5. 如果出现 `Sending thinking reply` 或 `Sending final reply` 后紧跟 `Feishu reply send failed`，说明应用处理到了回复阶段，但飞书出站失败。
+6. 如果出现 `Claude Code request started` 后紧跟 `Claude Code invocation failed` 或 `Claude Code request timed out`，说明飞书入站正常，阻塞点在 Claude Code 调用。
+
+联调时重点关注 `event_id`、`message_id`、`channel_id`、`chat_type`、`message_type` 和长度字段；默认实现不会把 `app_secret`、完整用户消息正文或完整回复正文写入日志。

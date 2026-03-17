@@ -197,8 +197,8 @@ func TestAdapterHandleSDKEvent(t *testing.T) {
 		sdkEvent := map[string]any{
 			"schema": "2.0",
 			"header": map[string]any{
-				"event_id":   "evt_sdk_001",
-				"event_type": "im.message.receive_v1",
+				"event_id":    "evt_sdk_001",
+				"event_type":  "im.message.receive_v1",
 				"create_time": "1704067200000",
 			},
 			"event": map[string]any{
@@ -277,6 +277,7 @@ func TestAdapterSendReply(t *testing.T) {
 		mockClient := NewMockClient()
 		router := core.NewRouter()
 		adapter := NewAdapter(mockClient, router)
+		expectedContent := `{"text":"Hello back!"}`
 
 		err := adapter.SendReply(context.Background(), "oc_chat_123", "Hello back!")
 		if err != nil {
@@ -289,8 +290,53 @@ func TestAdapterSendReply(t *testing.T) {
 		if mockClient.LastSendTextChatID != "oc_chat_123" {
 			t.Errorf("LastSendTextChatID = %v, want 'oc_chat_123'", mockClient.LastSendTextChatID)
 		}
-		if mockClient.LastSendTextContent != "Hello back!" {
-			t.Errorf("LastSendTextContent = %v, want 'Hello back!'", mockClient.LastSendTextContent)
+		if mockClient.LastSendTextContent != expectedContent {
+			t.Errorf("LastSendTextContent = %v, want %q", mockClient.LastSendTextContent, expectedContent)
+		}
+	})
+
+	t.Run("send reply matches unified message encoding for special characters", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+		adapter := NewAdapter(mockClient, router)
+
+		replyText := "Line 1\n\"quoted\""
+		expectedContent, err := NewMessageConverter().ToFeishuContent(&core.Message{
+			ChannelID: "oc_chat_special",
+			Content:   replyText,
+			Type:      core.MessageTypeText,
+		})
+		if err != nil {
+			t.Fatalf("ToFeishuContent() error = %v", err)
+		}
+
+		err = adapter.SendReply(context.Background(), "oc_chat_special", replyText)
+		if err != nil {
+			t.Fatalf("SendReply() error = %v", err)
+		}
+
+		if mockClient.LastSendTextContent != expectedContent {
+			t.Fatalf("reply content = %q, want %q", mockClient.LastSendTextContent, expectedContent)
+		}
+
+		mockClient.Reset()
+		msg := &core.Message{
+			ID:        "msg_special",
+			Platform:  "feishu",
+			UserID:    "ou_user",
+			ChannelID: "oc_chat_special",
+			Content:   replyText,
+			Type:      core.MessageTypeText,
+			Timestamp: time.Now(),
+		}
+
+		err = adapter.SendMessage(context.Background(), msg)
+		if err != nil {
+			t.Fatalf("SendMessage() error = %v", err)
+		}
+
+		if mockClient.LastSendTextContent != expectedContent {
+			t.Fatalf("unified message content = %q, want %q", mockClient.LastSendTextContent, expectedContent)
 		}
 	})
 

@@ -416,9 +416,9 @@ func TestStreamEventHasPermissionDenials(t *testing.T) {
 // TestStreamEventGetText tests the GetText method
 func TestStreamEventGetText(t *testing.T) {
 	tests := []struct {
-		name       string
-		event      *StreamEvent
-		wantText   string
+		name     string
+		event    *StreamEvent
+		wantText string
 	}{
 		{
 			name: "assistant text event",
@@ -433,7 +433,7 @@ func TestStreamEventGetText(t *testing.T) {
 		{
 			name: "non-text event returns empty",
 			event: &StreamEvent{
-				Type: "system",
+				Type:    "system",
 				Subtype: "init",
 			},
 			wantText: "",
@@ -456,6 +456,20 @@ func TestStreamEventGetText(t *testing.T) {
 			},
 			wantText: "",
 		},
+		{
+			name: "assistant mixed content returns concatenated text blocks",
+			event: &StreamEvent{
+				Type: "assistant",
+				Message: Message{
+					Content: []Content{
+						{Type: "tool_use", Name: "Read"},
+						{Type: "text", Text: "Hello"},
+						{Type: "text", Text: " world"},
+					},
+				},
+			},
+			wantText: "Hello world",
+		},
 	}
 
 	for _, tt := range tests {
@@ -471,11 +485,11 @@ func TestStreamEventGetText(t *testing.T) {
 // TestStreamEventGetToolInfo tests the GetToolInfo method
 func TestStreamEventGetToolInfo(t *testing.T) {
 	tests := []struct {
-		name        string
-		event       *StreamEvent
-		wantName    string
-		wantID      string
-		wantInput   map[string]interface{}
+		name      string
+		event     *StreamEvent
+		wantName  string
+		wantID    string
+		wantInput map[string]interface{}
 	}{
 		{
 			name: "assistant tool_use event",
@@ -497,7 +511,7 @@ func TestStreamEventGetToolInfo(t *testing.T) {
 		{
 			name: "non-tool_use event returns empty",
 			event: &StreamEvent{
-				Type: "system",
+				Type:    "system",
 				Subtype: "init",
 			},
 			wantName:  "",

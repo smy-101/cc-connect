@@ -440,13 +440,12 @@ done
 	}
 	defer pm.Stop()
 
-	// Wait for context to expire
+	// Wait for context to expire and allow the process a moment to be reaped.
 	<-ctx.Done()
+	time.Sleep(100 * time.Millisecond)
 
-	// Process should still be running (context timeout doesn't auto-kill)
-	// The Stop() in defer will clean it up
-	if !pm.IsRunning() {
-		t.Log("Process exited on its own (may have completed)")
+	if pm.IsRunning() {
+		t.Fatal("process should stop when context is canceled or times out")
 	}
 }
 

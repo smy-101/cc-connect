@@ -155,6 +155,24 @@ export FEISHU_APP_SECRET="your-app-secret"
 4. 在飞书中给机器人发送文本消息，验证消息接收与回复。
 5. 如需真实 API 验证，参考 [docs/feishu-real-integration-checklist.md](docs/feishu-real-integration-checklist.md) 中的 `integration` 测试命令。
 
+## Debug 排障
+
+当飞书单聊出现“长连接 ready，但机器人无响应”时，先把 `config.toml` 中的 `log_level` 调整为 `debug`，再重新启动：
+
+```bash
+./cc-connect -config ./config.toml
+```
+
+最小定位顺序如下：
+
+1. 看到 `Feishu SDK event received`：说明飞书事件已经到达本地进程；如果完全看不到，优先检查飞书后台事件订阅、机器人权限和长连接状态。
+2. 看到 `Feishu event conversion failed`：说明事件已到达，但消息体或类型没有成功转换成统一消息，先检查消息类型和飞书事件内容格式。
+3. 看到 `Feishu message routed` 之前就出现 `Feishu message routing failed`：说明问题在路由或 handler，而不是飞书长连接。
+4. 看到 `Sending thinking reply` 或 `Sending final reply` 后又出现 `Feishu reply send failed`：说明入站处理成功，但飞书回复出站失败。
+5. 看到 `Claude Code request started` 后出现 `Claude Code invocation failed` 或 `Claude Code request timed out`：说明飞书入站正常，问题在 Claude Code 调用链路。
+
+默认日志不会打印 `app_secret`、完整用户消息正文或完整回复正文；联调时主要依赖 `event_id`、`message_id`、`channel_id`、`chat_type`、`message_type` 和长度字段来判断断点。
+
 ## 斜杠命令
 
 | 命令 | 说明 | 示例 |

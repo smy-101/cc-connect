@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/smy-101/cc-connect/internal/core"
 	"github.com/smy-101/cc-connect/internal/core/command"
 )
+
+const emptyAgentReplyFallback = "⚠️ Claude Code 未返回内容，请稍后重试。"
 
 // wrapHandler wraps a Handler to work with core.Handler.
 // It creates the HandlerContext, injects dependencies, and handles panics.
@@ -42,7 +45,9 @@ func (a *App) wrapHandler(h Handler) core.Handler {
 // handleText handles text messages by sending them to the agent.
 func (a *App) handleText(hctx *HandlerContext) error {
 	// Send thinking status
+	slog.Debug("Sending thinking reply", messageLogFields(hctx.Msg)...)
 	if err := hctx.Reply.SendReply(hctx.Ctx, "🤔 正在思考..."); err != nil {
+		slog.Error("Thinking reply failed", append(messageLogFields(hctx.Msg), "error", err)...)
 		return fmt.Errorf("failed to send status: %w", err)
 	}
 
@@ -51,19 +56,37 @@ func (a *App) handleText(hctx *HandlerContext) error {
 	defer cancel()
 
 	// Send to agent
+	slog.Debug("Claude Code request started", messageLogFields(hctx.Msg)...)
 	resp, err := a.agent.SendMessage(ctx, hctx.Msg.Content, nil)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return hctx.Reply.SendReply(hctx.Ctx, "⏱️ 请求超时，请简化问题或稍后重试。")
+			slog.Warn("Claude Code request timed out", append(messageLogFields(hctx.Msg), "error", err)...)
+			return sendFinalReply(hctx, "⏱️ 请求超时，请简化问题或稍后重试。")
 		}
-		return hctx.Reply.SendReply(hctx.Ctx, fmt.Sprintf("❌ 处理失败: %v", err))
+		slog.Error("Claude Code invocation failed", append(messageLogFields(hctx.Msg), "error", err)...)
+		return sendFinalReply(hctx, fmt.Sprintf("❌ 处理失败: %v", err))
 	}
 
 	// Send response
 	if resp.IsError {
-		return hctx.Reply.SendReply(hctx.Ctx, fmt.Sprintf("❌ %s", resp.Content))
+		return sendFinalReply(hctx, fmt.Sprintf("❌ %s", resp.Content))
 	}
-	return hctx.Reply.SendReply(hctx.Ctx, resp.Content)
+	return sendFinalReply(hctx, resp.Content)
+}
+
+func sendFinalReply(hctx *HandlerContext, content string) error {
+	if strings.TrimSpace(content) == "" {
+		slog.Warn("Claude Code returned empty reply", messageLogFields(hctx.Msg)...)
+		content = emptyAgentReplyFallback
+	}
+
+	slog.Debug("Sending final reply", append(messageLogFields(hctx.Msg), "reply_length", len(content))...)
+	if err := hctx.Reply.SendReply(hctx.Ctx, content); err != nil {
+		slog.Error("Final reply send failed", append(append(messageLogFields(hctx.Msg), "reply_length", len(content)), "error", err)...)
+		return err
+	}
+	slog.Debug("Final reply sent", append(messageLogFields(hctx.Msg), "reply_length", len(content))...)
+	return nil
 }
 
 // handleCommand handles command messages.

@@ -109,6 +109,7 @@ func TestFeishuToRouter(t *testing.T) {
 		router := core.NewRouter()
 
 		adapter := NewAdapter(mockClient, router)
+		expectedContent := `{"text":"Reply message"}`
 
 		// Send a reply
 		err := adapter.SendReply(context.Background(), "oc_reply_chat", "Reply message")
@@ -123,8 +124,8 @@ func TestFeishuToRouter(t *testing.T) {
 		if mockClient.LastSendTextChatID != "oc_reply_chat" {
 			t.Errorf("LastSendTextChatID = %v, want 'oc_reply_chat'", mockClient.LastSendTextChatID)
 		}
-		if mockClient.LastSendTextContent != "Reply message" {
-			t.Errorf("LastSendTextContent = %v, want 'Reply message'", mockClient.LastSendTextContent)
+		if mockClient.LastSendTextContent != expectedContent {
+			t.Errorf("LastSendTextContent = %v, want %q", mockClient.LastSendTextContent, expectedContent)
 		}
 	})
 
@@ -172,8 +173,8 @@ func TestFeishuToRouter(t *testing.T) {
 		}
 
 		// Verify reply was sent
-		if mockClient.LastSendTextContent != "Pong" {
-			t.Errorf("LastSendTextContent = %v, want 'Pong'", mockClient.LastSendTextContent)
+		if mockClient.LastSendTextContent != `{"text":"Pong"}` {
+			t.Errorf("LastSendTextContent = %v, want %q", mockClient.LastSendTextContent, `{"text":"Pong"}`)
 		}
 	})
 }

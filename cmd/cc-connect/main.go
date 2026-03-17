@@ -5,9 +5,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/smy-101/cc-connect/internal/app"
@@ -36,10 +38,7 @@ func main() {
 	}
 
 	// Setup logger
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
+	slog.SetDefault(newLogger("info", os.Stdout))
 
 	// Load configuration
 	config, err := loadConfig(*configPath)
@@ -47,6 +46,9 @@ func main() {
 		slog.Error("Failed to load configuration", "error", err, "path", *configPath)
 		os.Exit(1)
 	}
+
+	// Rebuild logger with configured log level after config load succeeds.
+	slog.SetDefault(newLogger(config.LogLevel, os.Stdout))
 
 	// Create application
 	application, err := app.New(config)
@@ -83,6 +85,27 @@ func main() {
 
 	application.WaitForShutdown()
 	slog.Info("Application stopped")
+}
+
+func newLogger(level string, writer io.Writer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{
+		Level: parseLogLevel(level),
+	}))
+}
+
+func parseLogLevel(level string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	case "info":
+		fallthrough
+	default:
+		return slog.LevelInfo
+	}
 }
 
 // loadConfig loads the configuration from the specified path.

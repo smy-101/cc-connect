@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/smy-101/cc-connect/internal/platform/feishu"
 )
@@ -37,5 +38,11 @@ func (r *replySender) SendReply(ctx context.Context, content string) error {
 	if r.channelID == "" {
 		return fmt.Errorf("channelID is empty")
 	}
-	return r.adapter.SendReply(ctx, r.channelID, content)
+	slog.Debug("Feishu reply send requested", replyLogFields(r.channelID, content)...)
+	if err := r.adapter.SendReply(ctx, r.channelID, content); err != nil {
+		slog.Error("Feishu reply send failed", append(replyLogFields(r.channelID, content), "error", err)...)
+		return err
+	}
+	slog.Debug("Feishu reply sent", replyLogFields(r.channelID, content)...)
+	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -124,6 +125,8 @@ func (f *realSDKFacade) Stop(ctx context.Context) error {
 }
 
 func (f *realSDKFacade) SendText(ctx context.Context, chatID, content string) error {
+	slog.Debug("Feishu API send requested", sendLogFields(chatID, content)...)
+
 	body := larkim.NewCreateMessageReqBodyBuilder().
 		ReceiveId(chatID).
 		MsgType("text").
@@ -138,11 +141,16 @@ func (f *realSDKFacade) SendText(ctx context.Context, chatID, content string) er
 
 	resp, err := f.apiClient.Im.V1.Message.Create(ctx, req)
 	if err != nil {
+		slog.Error("Feishu API send failed", append(sendLogFields(chatID, content), "error", err)...)
 		return err
 	}
 	if !resp.Success() {
-		return fmt.Errorf("feishu send text failed: code=%d msg=%s", resp.Code, resp.Msg)
+		err = fmt.Errorf("feishu send text failed: code=%d msg=%s", resp.Code, resp.Msg)
+		slog.Error("Feishu API send failed", append(sendLogFields(chatID, content), "error", err)...)
+		return err
 	}
+
+	slog.Debug("Feishu API send succeeded", sendLogFields(chatID, content)...)
 
 	return nil
 }

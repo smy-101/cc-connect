@@ -22,13 +22,15 @@ func newMockProcessManager() *mockProcessManager {
 func (m *mockProcessManager) buildCommand(config *ProcessConfig) []string {
 	args := []string{
 		"-p",
+		"--verbose",
 		"--output-format", "stream-json",
-		"--session-id", config.SessionID,
 		"--permission-mode", PermissionModeToCLIArg(config.PermissionMode),
 	}
 
 	if config.Resume {
-		args = append(args, "--resume")
+		args = append(args, "--resume", config.SessionID)
+	} else if config.SessionID != "" {
+		args = append(args, "--session-id", config.SessionID)
 	}
 
 	// Add message if provided
@@ -84,9 +86,9 @@ func (m *mockProcessManager) IsRunning() bool {
 // TestBuildCommand tests command construction
 func TestBuildCommand(t *testing.T) {
 	tests := []struct {
-		name       string
-		config     *ProcessConfig
-		wantArgs   []string
+		name     string
+		config   *ProcessConfig
+		wantArgs []string
 	}{
 		{
 			name: "basic start",
@@ -98,9 +100,10 @@ func TestBuildCommand(t *testing.T) {
 			},
 			wantArgs: []string{
 				"-p",
+				"--verbose",
 				"--output-format", "stream-json",
-				"--session-id", "test-session-123",
 				"--permission-mode", "default",
+				"--session-id", "test-session-123",
 			},
 		},
 		{
@@ -114,10 +117,10 @@ func TestBuildCommand(t *testing.T) {
 			},
 			wantArgs: []string{
 				"-p",
+				"--verbose",
 				"--output-format", "stream-json",
-				"--session-id", "test-session-456",
 				"--permission-mode", "default",
-				"--resume",
+				"--resume", "test-session-456",
 			},
 		},
 		{
@@ -130,9 +133,10 @@ func TestBuildCommand(t *testing.T) {
 			},
 			wantArgs: []string{
 				"-p",
+				"--verbose",
 				"--output-format", "stream-json",
-				"--session-id", "test-session-789",
 				"--permission-mode", "bypassPermissions",
+				"--session-id", "test-session-789",
 			},
 		},
 	}
@@ -514,7 +518,7 @@ func TestProcessManagerWithEnv(t *testing.T) {
 		WorkingDir:     tmpDir,
 		PermissionMode: agent.PermissionModeDefault,
 		ClaudePath:     "claude",
-		Env:           []string{"TEST_VAR=test_value", "ANOTHER_VAR=another"},
+		Env:            []string{"TEST_VAR=test_value", "ANOTHER_VAR=another"},
 	}
 	pm := NewProcessManager(config)
 
@@ -539,9 +543,9 @@ func TestProcessManagerWithEnv(t *testing.T) {
 // TestProcessManagerBuildCommand tests buildCommand with various configs
 func TestProcessManagerBuildCommand(t *testing.T) {
 	tests := []struct {
-		name           string
-		config         *ProcessConfig
-		wantInArgs     []string
+		name       string
+		config     *ProcessConfig
+		wantInArgs []string
 	}{
 		{
 			name: "with message",

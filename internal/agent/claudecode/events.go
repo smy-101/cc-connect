@@ -1,5 +1,7 @@
 package claudecode
 
+import "strings"
+
 // StreamEvent represents a parsed streaming event from Claude Code CLI
 type StreamEvent struct {
 	// Type is the event type: system, assistant, user, result
@@ -106,10 +108,18 @@ func (e *StreamEvent) HasPermissionDenials() bool {
 
 // GetText returns the text content for assistant text events
 func (e *StreamEvent) GetText() string {
-	if !e.IsAssistantText() {
+	if e.Type != "assistant" || len(e.Message.Content) == 0 {
 		return ""
 	}
-	return e.Message.Content[0].Text
+
+	parts := make([]string, 0, len(e.Message.Content))
+	for _, content := range e.Message.Content {
+		if content.Type == "text" && content.Text != "" {
+			parts = append(parts, content.Text)
+		}
+	}
+
+	return strings.Join(parts, "")
 }
 
 // GetToolInfo returns tool info for assistant tool_use events
