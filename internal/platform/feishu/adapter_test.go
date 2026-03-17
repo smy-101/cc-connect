@@ -21,7 +21,41 @@ func TestAdapterHandleEvent(t *testing.T) {
 		}
 	})
 
-	t.Run("valid event routes successfully", func(t *testing.T) {
+	t.Run("app sender type is ignored to prevent message loop", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+
+		var handlerCalled bool
+		router.Register(core.MessageTypeText, func(ctx context.Context, msg *core.Message) error {
+			handlerCalled = true
+			return nil
+		})
+
+		adapter := NewAdapter(mockClient, router)
+
+		event := &MessageReceiveEvent{
+			EventID:     "evt_app_001",
+			MessageID:   "msg_app_001",
+			MessageType: "text",
+			Content:     `{"text":"Bot message"}`,
+			ChatID:      "oc_chat",
+			ChatType:    "p2p",
+			Sender:      SenderInfo{OpenID: "cli_app_id", SenderType: "app"},
+			CreateTime:  time.Now(),
+		}
+
+		err := adapter.HandleEvent(context.Background(), event)
+		if err != nil {
+			t.Errorf("HandleEvent() error = %v", err)
+		}
+
+		// Handler should NOT be called for app messages
+		if handlerCalled {
+			t.Error("handler should not be called for app sender type")
+		}
+	})
+
+	t.Run("user sender type is processed normally", func(t *testing.T) {
 		mockClient := NewMockClient()
 		router := core.NewRouter()
 
@@ -686,6 +720,223 @@ func TestAdapterCommandDetection(t *testing.T) {
 
 		if receivedMsg.Type != core.MessageTypeCommand {
 			t.Errorf("Type = %v, want %v", receivedMsg.Type, core.MessageTypeCommand)
+		}
+	})
+}
+
+// Claude Code double-slash command tests
+
+func TestAdapterClaudeCodeCommandDetection(t *testing.T) {
+	t.Run("double slash command converted to single slash and stays MessageTypeText", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+
+		var receivedMsg *core.Message
+		router.Register(core.MessageTypeText, func(ctx context.Context, msg *core.Message) error {
+			receivedMsg = msg
+			return nil
+		})
+
+		adapter := NewAdapter(mockClient, router)
+
+		event := &MessageReceiveEvent{
+			EventID:     "evt_cc_001",
+			MessageID:   "msg_cc_001",
+			MessageType: "text",
+			Content:     `{"text":"//cost"}`,
+			ChatID:      "oc_chat",
+			ChatType:    "p2p",
+			Sender:      SenderInfo{OpenID: "ou_user"},
+			CreateTime:  time.Now(),
+		}
+
+		err := adapter.HandleEvent(context.Background(), event)
+		if err != nil {
+			t.Errorf("HandleEvent() error = %v", err)
+		}
+
+		if receivedMsg == nil {
+			t.Fatal("receivedMsg is nil")
+		}
+
+		// Should remain as MessageTypeText (so it flows to Agent)
+		if receivedMsg.Type != core.MessageTypeText {
+			t.Errorf("Type = %v, want %v", receivedMsg.Type, core.MessageTypeText)
+		}
+
+		// Content should be converted from //cost to /cost
+		if receivedMsg.Content != "/cost" {
+			t.Errorf("Content = %v, want '/cost'", receivedMsg.Content)
+		}
+	})
+
+	t.Run("double slash command with args is handled correctly", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+
+		var receivedMsg *core.Message
+		router.Register(core.MessageTypeText, func(ctx context.Context, msg *core.Message) error {
+			receivedMsg = msg
+			return nil
+		})
+
+		adapter := NewAdapter(mockClient, router)
+
+		event := &MessageReceiveEvent{
+			EventID:     "evt_cc_002",
+			MessageID:   "msg_cc_002",
+			MessageType: "text",
+			Content:     `{"text":"//compact focus on auth"}`,
+			ChatID:      "oc_chat",
+			ChatType:    "p2p",
+			Sender:      SenderInfo{OpenID: "ou_user"},
+			CreateTime:  time.Now(),
+		}
+
+		err := adapter.HandleEvent(context.Background(), event)
+		if err != nil {
+			t.Errorf("HandleEvent() error = %v", err)
+		}
+
+		if receivedMsg == nil {
+			t.Fatal("receivedMsg is nil")
+		}
+
+		// Should remain as MessageTypeText
+		if receivedMsg.Type != core.MessageTypeText {
+			t.Errorf("Type = %v, want %v", receivedMsg.Type, core.MessageTypeText)
+		}
+
+		// Content should be converted from //compact focus on auth to /compact focus on auth
+		if receivedMsg.Content != "/compact focus on auth" {
+			t.Errorf("Content = %v, want '/compact focus on auth'", receivedMsg.Content)
+		}
+	})
+
+	t.Run("single slash command still converted to MessageTypeCommand", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+
+		var receivedMsg *core.Message
+		router.Register(core.MessageTypeCommand, func(ctx context.Context, msg *core.Message) error {
+			receivedMsg = msg
+			return nil
+		})
+
+		adapter := NewAdapter(mockClient, router)
+
+		event := &MessageReceiveEvent{
+			EventID:     "evt_cmd_002",
+			MessageID:   "msg_cmd_002",
+			MessageType: "text",
+			Content:     `{"text":"/cost"}`,
+			ChatID:      "oc_chat",
+			ChatType:    "p2p",
+			Sender:      SenderInfo{OpenID: "ou_user"},
+			CreateTime:  time.Now(),
+		}
+
+		err := adapter.HandleEvent(context.Background(), event)
+		if err != nil {
+			t.Errorf("HandleEvent() error = %v", err)
+		}
+
+		if receivedMsg == nil {
+			t.Fatal("receivedMsg is nil")
+		}
+
+		// Single slash should become MessageTypeCommand
+		if receivedMsg.Type != core.MessageTypeCommand {
+			t.Errorf("Type = %v, want %v", receivedMsg.Type, core.MessageTypeCommand)
+		}
+
+		// Content should NOT be modified
+		if receivedMsg.Content != "/cost" {
+			t.Errorf("Content = %v, want '/cost'", receivedMsg.Content)
+		}
+	})
+
+	t.Run("triple slash not treated as Claude Code command", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+
+		var receivedMsg *core.Message
+		router.Register(core.MessageTypeCommand, func(ctx context.Context, msg *core.Message) error {
+			receivedMsg = msg
+			return nil
+		})
+
+		adapter := NewAdapter(mockClient, router)
+
+		event := &MessageReceiveEvent{
+			EventID:     "evt_triple_001",
+			MessageID:   "msg_triple_001",
+			MessageType: "text",
+			Content:     `{"text":"///mode"}`,
+			ChatID:      "oc_chat",
+			ChatType:    "p2p",
+			Sender:      SenderInfo{OpenID: "ou_user"},
+			CreateTime:  time.Now(),
+		}
+
+		err := adapter.HandleEvent(context.Background(), event)
+		if err != nil {
+			t.Errorf("HandleEvent() error = %v", err)
+		}
+
+		if receivedMsg == nil {
+			t.Fatal("receivedMsg is nil")
+		}
+
+		// Triple slash starts with single slash, so it becomes a command
+		if receivedMsg.Type != core.MessageTypeCommand {
+			t.Errorf("Type = %v, want %v", receivedMsg.Type, core.MessageTypeCommand)
+		}
+
+		// Content should NOT be modified (///mode stays as ///mode)
+		if receivedMsg.Content != "///mode" {
+			t.Errorf("Content = %v, want '///mode'", receivedMsg.Content)
+		}
+	})
+
+	t.Run("plain text is unaffected", func(t *testing.T) {
+		mockClient := NewMockClient()
+		router := core.NewRouter()
+
+		var receivedMsg *core.Message
+		router.Register(core.MessageTypeText, func(ctx context.Context, msg *core.Message) error {
+			receivedMsg = msg
+			return nil
+		})
+
+		adapter := NewAdapter(mockClient, router)
+
+		event := &MessageReceiveEvent{
+			EventID:     "evt_plain_001",
+			MessageID:   "msg_plain_001",
+			MessageType: "text",
+			Content:     `{"text":"Hello, this is a normal message"}`,
+			ChatID:      "oc_chat",
+			ChatType:    "p2p",
+			Sender:      SenderInfo{OpenID: "ou_user"},
+			CreateTime:  time.Now(),
+		}
+
+		err := adapter.HandleEvent(context.Background(), event)
+		if err != nil {
+			t.Errorf("HandleEvent() error = %v", err)
+		}
+
+		if receivedMsg == nil {
+			t.Fatal("receivedMsg is nil")
+		}
+
+		if receivedMsg.Type != core.MessageTypeText {
+			t.Errorf("Type = %v, want %v", receivedMsg.Type, core.MessageTypeText)
+		}
+
+		if receivedMsg.Content != "Hello, this is a normal message" {
+			t.Errorf("Content = %v, want 'Hello, this is a normal message'", receivedMsg.Content)
 		}
 	})
 }

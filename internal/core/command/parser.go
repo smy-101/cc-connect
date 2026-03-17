@@ -11,6 +11,18 @@ func IsCommand(text string) bool {
 	return len(text) >= 2 && text[0] == '/'
 }
 
+// IsClaudeCodeCommand checks if the given text is a Claude Code slash command.
+// A Claude Code command must start with "//" (double slash) followed by at least one character.
+// It must NOT start with three or more slashes.
+func IsClaudeCodeCommand(text string) bool {
+	// Must have at least 3 characters: '//' plus at least one command character
+	if len(text) < 3 {
+		return false
+	}
+	// Must start with "//" but NOT "///"
+	return text[0] == '/' && text[1] == '/' && text[2] != '/'
+}
+
 // Parse parses a command string into a Command struct.
 // It removes the leading '/' and splits the rest by whitespace.
 // Supports:

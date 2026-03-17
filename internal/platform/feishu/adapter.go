@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +62,13 @@ func (a *Adapter) HandleEvent(ctx context.Context, event *MessageReceiveEvent) e
 		return errors.New("event is nil")
 	}
 
+	// Ignore messages from the bot itself (sender_type = "app") to prevent message loops
+	// Feishu may deliver the bot's own messages back as events
+	if event.Sender.SenderType != "" && event.Sender.SenderType != "user" {
+		slog.Debug("Feishu event ignored (not from user)", "event_id", event.EventID, "sender_type", event.Sender.SenderType)
+		return nil
+	}
+
 	// Deduplicate events: Feishu may re-deliver the same event if ACK was slow
 	if event.EventID != "" {
 		a.seenEventsMu.Lock()
@@ -87,8 +95,14 @@ func (a *Adapter) HandleEvent(ctx context.Context, event *MessageReceiveEvent) e
 	}
 	slog.Debug("Feishu event converted", append(eventLogFields(event), unifiedMessageLogFields(msg)...)...)
 
-	// Detect slash commands: convert text messages starting with '/' to command type
-	if msg.Type == core.MessageTypeText && command.IsCommand(msg.Content) {
+	// Detect Claude Code commands (double slash): remove one slash and send to Agent
+	// This must be checked before single slash detection
+	if msg.Type == core.MessageTypeText && command.IsClaudeCodeCommand(msg.Content) {
+		// Remove one slash: //cost → /cost
+		msg.Content = strings.TrimPrefix(msg.Content, "/")
+		// Keep as MessageTypeText so it flows to Agent (not converted to Command)
+	} else if msg.Type == core.MessageTypeText && command.IsCommand(msg.Content) {
+		// Detect cc-connect slash commands: convert text messages starting with '/' to command type
 		msg.Type = core.MessageTypeCommand
 	}
 

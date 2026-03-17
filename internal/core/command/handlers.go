@@ -32,6 +32,16 @@ func (e *Executor) handleHelp(ctx context.Context, cmd Command, msg *core.Messag
   无参数时显示项目列表
   /project <name> - 切换到指定项目
   --keep / -k - 切换时保留会话
+
+Claude Code 命令 (双斜杠 //):
+//cost        显示 token 使用统计
+//compact     压缩对话历史
+//review      请求代码审查
+//init        初始化项目 CLAUDE.md
+//pr-comments 查看 PR 评论
+//security-review 安全审查
+
+提示: 使用 // 前缀调用 Claude Code 的原生命令
 `
 	return CommandResult{
 		Message: fmt.Sprintf("```\n%s```", helpText),

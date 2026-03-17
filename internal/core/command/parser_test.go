@@ -411,6 +411,90 @@ func TestParseFlags(t *testing.T) {
 	}
 }
 
+func TestIsClaudeCodeCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		// Valid Claude Code commands (double slash)
+		{
+			name:     "double slash command",
+			input:    "//cost",
+			expected: true,
+		},
+		{
+			name:     "double slash with args",
+			input:    "//compact focus on auth",
+			expected: true,
+		},
+		{
+			name:     "double slash review",
+			input:    "//review",
+			expected: true,
+		},
+		{
+			name:     "text starting with double slash",
+			input:    "// test",
+			expected: true,
+		},
+		{
+			name:     "double slash with complex args",
+			input:    "//compact focus on auth module",
+			expected: true,
+		},
+		// Invalid Claude Code commands
+		{
+			name:     "single slash",
+			input:    "/mode",
+			expected: false,
+		},
+		{
+			name:     "triple slash",
+			input:    "///mode",
+			expected: false,
+		},
+		{
+			name:     "only double slash",
+			input:    "//",
+			expected: false,
+		},
+		{
+			name:     "no slash",
+			input:    "hello",
+			expected: false,
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: false,
+		},
+		{
+			name:     "single slash with arg",
+			input:    "/mode yolo",
+			expected: false,
+		},
+		{
+			name:     "quad slash",
+			input:    "////cost",
+			expected: false,
+		},
+		{
+			name:     "space before double slash",
+			input:    " //cost",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsClaudeCodeCommand(tt.input); got != tt.expected {
+				t.Errorf("IsClaudeCodeCommand(%q) = %v, want %v", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestCommandHasFlag(t *testing.T) {
 	tests := []struct {
 		name     string
