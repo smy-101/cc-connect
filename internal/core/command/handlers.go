@@ -27,6 +27,11 @@ func (e *Executor) handleHelp(ctx context.Context, cmd Command, msg *core.Messag
 /help         - 显示此帮助信息
 
 /stop         - 停止当前 Agent
+
+/project [name] [--keep|-k] - 项目管理
+  无参数时显示项目列表
+  /project <name> - 切换到指定项目
+  --keep / -k - 切换时保留会话
 `
 	return CommandResult{
 		Message: fmt.Sprintf("```\n%s```", helpText),

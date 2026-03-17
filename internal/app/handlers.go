@@ -28,8 +28,21 @@ func (a *App) wrapHandler(h Handler) core.Handler {
 		sessionID := core.DeriveSessionID(msg)
 		session := a.router.Sessions().GetOrCreate(sessionID)
 
-		// Create ReplySender
-		replySender := newReplySender(a.feishu, msg.ChannelID)
+		// Create ReplySender with project name prefix
+		projectName := ""
+		if a.projectRouter != nil {
+			if active := a.projectRouter.ActiveProject(); active != nil {
+				projectName = active.Name
+			}
+		} else if a.project != nil {
+			projectName = a.project.Name
+		}
+		var replySender ReplySender
+		if projectName != "" {
+			replySender = newReplySenderWithProject(a.feishu, msg.ChannelID, projectName)
+		} else {
+			replySender = newReplySender(a.feishu, msg.ChannelID)
+		}
 
 		hctx := &HandlerContext{
 			Ctx:     ctx,
@@ -51,13 +64,24 @@ func (a *App) handleText(hctx *HandlerContext) error {
 		return fmt.Errorf("failed to send status: %w", err)
 	}
 
+	// Get the current active agent
+	// Priority: ProjectRouter's active project > App's agent
+	agent := a.agent
+	if a.projectRouter != nil {
+		if active := a.projectRouter.ActiveProject(); active != nil {
+			if ag := active.Agent(); ag != nil {
+				agent = ag
+			}
+		}
+	}
+
 	// Create timeout context
 	ctx, cancel := context.WithTimeout(hctx.Ctx, a.agentTimeout)
 	defer cancel()
 
 	// Send to agent
 	slog.Debug("Claude Code request started", messageLogFields(hctx.Msg)...)
-	resp, err := a.agent.SendMessage(ctx, hctx.Msg.Content, nil)
+	resp, err := agent.SendMessage(ctx, hctx.Msg.Content, nil)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			slog.Warn("Claude Code request timed out", append(messageLogFields(hctx.Msg), "error", err)...)

@@ -169,3 +169,35 @@
 #### Scenario: 注入 mock 时间
 - **WHEN** 创建 SessionManager 时指定自定义 `now` 函数
 - **THEN** 所有时间相关操作使用该函数返回的时间
+
+---
+
+### Requirement: 项目级会话管理器
+
+系统 SHALL 为每个项目提供独立的 SessionManager。
+
+#### Scenario: 项目创建时初始化 SessionManager
+- **WHEN** 创建新项目实例
+- **THEN** 系统 SHALL 为该项目创建独立的 SessionManager
+- **AND** SessionManager SHALL 使用项目级配置
+
+#### Scenario: 会话按项目隔离
+- **WHEN** 项目 A 有会话 "feishu:channel:oc_xxx"
+- **AND** 项目 B 有会话 "feishu:channel:oc_xxx"
+- **THEN** 两个会话 SHALL 相互独立
+- **AND** 修改项目 A 的会话 SHALL 不影响项目 B
+
+---
+
+### Requirement: 会话清除
+
+系统 SHALL 支持清除项目的所有会话。
+
+#### Scenario: 清除项目会话
+- **WHEN** 调用 `project.ClearSessions()`
+- **THEN** 系统 SHALL 销毁该项目的所有会话
+- **AND** 其他项目的会话 SHALL 不受影响
+
+#### Scenario: 切换项目时清除会话
+- **WHEN** 用户切换项目且未指定 --keep
+- **THEN** 系统 SHALL 清除旧项目的所有会话

@@ -178,3 +178,49 @@ TBD - created by archiving change add-slash-commands. Update Purpose after archi
 - **THEN** 系统 SHALL 通过 Router 将响应发送回原平台
 - **AND** 响应 SHALL 为文本格式
 
+---
+
+### Requirement: /project 命令
+
+系统 SHALL 支持 `/project` 命令管理多项目。
+
+#### Scenario: 显示当前项目
+- **WHEN** 用户发送 `/project`（无参数）
+- **THEN** 系统 SHALL 返回当前项目信息
+- **AND** 系统 SHALL 返回可用项目列表
+- **AND** 当前项目 SHALL 有明确标识
+
+#### Scenario: 切换项目
+- **WHEN** 用户发送 `/project <name>`
+- **THEN** 系统 SHALL 切换到指定项目
+- **AND** 系统 SHALL 清除旧会话（默认行为）
+- **AND** 系统 SHALL 返回切换结果
+
+#### Scenario: 切换项目并保留会话
+- **WHEN** 用户发送 `/project <name> --keep`
+- **THEN** 系统 SHALL 切换到指定项目
+- **AND** 系统 SHALL 保留旧项目的会话
+
+#### Scenario: 短标志保留会话
+- **WHEN** 用户发送 `/project <name> -k`
+- **THEN** 系统 SHALL 切换到指定项目
+- **AND** 系统 SHALL 保留旧项目的会话
+
+---
+
+### Requirement: 命令标志解析
+
+系统 SHALL 支持命令标志解析。
+
+#### Scenario: 解析长标志
+- **WHEN** 解析 `/project backend --keep`
+- **THEN** 系统 SHALL 返回 Command{Name: "project", Args: ["backend"], Flags: {"keep": "true"}}
+
+#### Scenario: 解析短标志
+- **WHEN** 解析 `/project backend -k`
+- **THEN** 系统 SHALL 返回 Command{Name: "project", Args: ["backend"], Flags: {"k": "true"}}
+
+#### Scenario: 无标志命令
+- **WHEN** 解析 `/project backend`
+- **THEN** 系统 SHALL 返回 Command{Name: "project", Args: ["backend"], Flags: {}}
+

@@ -301,3 +301,212 @@ func TestCommandIsEmpty(t *testing.T) {
 		})
 	}
 }
+
+func TestParseFlags(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedName  string
+		expectedArgs  []string
+		expectedFlags map[string]string
+	}{
+		{
+			name:          "no flags",
+			input:         "/project backend",
+			expectedName:  "project",
+			expectedArgs:  []string{"backend"},
+			expectedFlags: map[string]string{},
+		},
+		{
+			name:          "long flag --keep",
+			input:         "/project backend --keep",
+			expectedName:  "project",
+			expectedArgs:  []string{"backend"},
+			expectedFlags: map[string]string{"keep": "true"},
+		},
+		{
+			name:          "short flag -k",
+			input:         "/project backend -k",
+			expectedName:  "project",
+			expectedArgs:  []string{"backend"},
+			expectedFlags: map[string]string{"k": "true"},
+		},
+		{
+			name:          "multiple flags",
+			input:         "/project backend --keep --verbose",
+			expectedName:  "project",
+			expectedArgs:  []string{"backend"},
+			expectedFlags: map[string]string{"keep": "true", "verbose": "true"},
+		},
+		{
+			name:          "flag with value",
+			input:         "/cmd --name myvalue",
+			expectedName:  "cmd",
+			expectedArgs:  []string{},
+			expectedFlags: map[string]string{"name": "myvalue"},
+		},
+		{
+			name:          "arg before flag",
+			input:         "/project myproject --keep",
+			expectedName:  "project",
+			expectedArgs:  []string{"myproject"},
+			expectedFlags: map[string]string{"keep": "true"},
+		},
+		{
+			name:          "multiple args and flags",
+			input:         "/cmd arg1 arg2 --flag1 --flag2 value2",
+			expectedName:  "cmd",
+			expectedArgs:  []string{"arg1", "arg2"},
+			expectedFlags: map[string]string{"flag1": "true", "flag2": "value2"},
+		},
+		{
+			name:          "short and long flags mixed",
+			input:         "/cmd -k --verbose",
+			expectedName:  "cmd",
+			expectedArgs:  []string{},
+			expectedFlags: map[string]string{"k": "true", "verbose": "true"},
+		},
+		{
+			name:          "flag with equals sign",
+			input:         "/cmd --name=value",
+			expectedName:  "cmd",
+			expectedArgs:  []string{},
+			expectedFlags: map[string]string{"name": "value"},
+		},
+		{
+			name:          "short flag with value",
+			input:         "/cmd -n value",
+			expectedName:  "cmd",
+			expectedArgs:  []string{},
+			expectedFlags: map[string]string{"n": "value"},
+		},
+		{
+			name:          "empty command with flags",
+			input:         "/cmd --flag",
+			expectedName:  "cmd",
+			expectedArgs:  []string{},
+			expectedFlags: map[string]string{"flag": "true"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := Parse(tt.input)
+
+			if cmd.Name != tt.expectedName {
+				t.Errorf("Parse(%q).Name = %q, want %q", tt.input, cmd.Name, tt.expectedName)
+			}
+
+			if !reflect.DeepEqual(cmd.Args, tt.expectedArgs) {
+				t.Errorf("Parse(%q).Args = %v, want %v", tt.input, cmd.Args, tt.expectedArgs)
+			}
+
+			if cmd.Flags == nil {
+				cmd.Flags = make(map[string]string)
+			}
+			if !reflect.DeepEqual(cmd.Flags, tt.expectedFlags) {
+				t.Errorf("Parse(%q).Flags = %v, want %v", tt.input, cmd.Flags, tt.expectedFlags)
+			}
+		})
+	}
+}
+
+func TestCommandHasFlag(t *testing.T) {
+	tests := []struct {
+		name     string
+		cmd      Command
+		flag     string
+		expected bool
+	}{
+		{
+			name: "flag exists",
+			cmd: Command{
+				Name:  "project",
+				Args:  []string{"backend"},
+				Flags: map[string]string{"keep": "true"},
+			},
+			flag:     "keep",
+			expected: true,
+		},
+		{
+			name: "flag does not exist",
+			cmd: Command{
+				Name:  "project",
+				Args:  []string{"backend"},
+				Flags: map[string]string{},
+			},
+			flag:     "keep",
+			expected: false,
+		},
+		{
+			name: "nil flags",
+			cmd: Command{
+				Name: "project",
+				Args: []string{"backend"},
+			},
+			flag:     "keep",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.cmd.HasFlag(tt.flag) != tt.expected {
+				t.Errorf("Command.HasFlag(%q) = %v, want %v", tt.flag, tt.cmd.HasFlag(tt.flag), tt.expected)
+			}
+		})
+	}
+}
+
+func TestCommandFlagValue(t *testing.T) {
+	tests := []struct {
+		name         string
+		cmd          Command
+		flag         string
+		expectedVal  string
+		expectedBool bool
+	}{
+		{
+			name: "flag with value",
+			cmd: Command{
+				Name:  "cmd",
+				Flags: map[string]string{"name": "myvalue"},
+			},
+			flag:         "name",
+			expectedVal:  "myvalue",
+			expectedBool: true,
+		},
+		{
+			name: "flag with true",
+			cmd: Command{
+				Name:  "cmd",
+				Flags: map[string]string{"keep": "true"},
+			},
+			flag:         "keep",
+			expectedVal:  "true",
+			expectedBool: true,
+		},
+		{
+			name: "flag does not exist",
+			cmd: Command{
+				Name:  "cmd",
+				Flags: map[string]string{},
+			},
+			flag:         "keep",
+			expectedVal:  "",
+			expectedBool: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			val, ok := tt.cmd.FlagValue(tt.flag)
+			if val != tt.expectedVal {
+				t.Errorf("Command.FlagValue(%q) = %q, want %q", tt.flag, val, tt.expectedVal)
+			}
+			if ok != tt.expectedBool {
+				t.Errorf("Command.FlagValue(%q) ok = %v, want %v", tt.flag, ok, tt.expectedBool)
+			}
+		})
+	}
+}

@@ -55,6 +55,7 @@ type App struct {
 
 	// Core components
 	router              *core.Router
+	projectRouter       *core.ProjectRouter
 	agent               agent.Agent
 	feishu              *feishu.Adapter
 	executor            *command.Executor
@@ -102,7 +103,35 @@ func New(config *core.AppConfig) (*App, error) {
 	// Create core components
 	router := core.NewRouter()
 
-	// Create agent
+	// Create agent factory for ProjectRouter
+	agentFactory := func(cfg *core.ProjectConfig) (agent.Agent, error) {
+		mode := parsePermissionMode(cfg.ClaudeCode.DefaultPermissionMode)
+		agentConfig := &claudecode.Config{
+			WorkingDir:     cfg.WorkingDir,
+			PermissionMode: mode,
+		}
+		return claudecode.NewAgent(agentConfig)
+	}
+
+	// Create ProjectRouter
+	projectRouter, err := core.NewProjectRouter(config.Projects, agentFactory)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create project router: %w", err)
+	}
+
+	// Set active project
+	if config.DefaultProject != "" {
+		if err := projectRouter.SetActiveProject(config.DefaultProject); err != nil {
+			// Fall back to first project
+			projectRouter.SetActiveProject(config.Projects[0].Name)
+		}
+	} else {
+		// Use first project as default
+		projectRouter.SetActiveProject(config.Projects[0].Name)
+	}
+
+	// Create agent for backward compatibility
+	// The agent is created from the active project
 	agentConfig := &claudecode.Config{
 		WorkingDir:     agentCfg.WorkingDir,
 		PermissionMode: agentCfg.PermissionMode,
@@ -112,18 +141,21 @@ func New(config *core.AppConfig) (*App, error) {
 		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}
 
-	// Create executor
-	executor := command.NewExecutor(ag, router.Sessions())
+	// Create executor with ProjectRouter for /project command support
+	executor := command.NewExecutorWithRouter(projectRouter)
+	executor.SetAgent(ag)
+	executor.SetSessions(router.Sessions())
 
 	return &App{
-		config:       config,
-		project:      project,
-		agentCfg:     agentCfg,
-		router:       router,
-		agent:        ag,
-		executor:     executor,
-		status:       AppStatusIdle,
-		agentTimeout: agentCfg.AgentTimeout,
+		config:         config,
+		project:        project,
+		agentCfg:       agentCfg,
+		router:         router,
+		projectRouter:  projectRouter,
+		agent:          ag,
+		executor:       executor,
+		status:         AppStatusIdle,
+		agentTimeout:   agentCfg.AgentTimeout,
 		feishuClientFactory: func(appID, appSecret string) feishu.FeishuClient {
 			return feishu.NewSDKClient(appID, appSecret)
 		},
@@ -251,6 +283,11 @@ func (a *App) Agent() agent.Agent {
 	return a.agent
 }
 
+// ProjectRouter returns the project router for multi-project management.
+func (a *App) ProjectRouter() *core.ProjectRouter {
+	return a.projectRouter
+}
+
 // SetFeishuClientFactory overrides the Feishu client factory.
 // It is primarily used by tests to avoid real network dependencies.
 func (a *App) SetFeishuClientFactory(factory func(appID, appSecret string) feishu.FeishuClient) {
@@ -322,8 +359,13 @@ func (a *App) Stop() error {
 		}
 	}
 
-	// Stop agent
-	if a.agent != nil {
+	// Stop all project agents via ProjectRouter
+	if a.projectRouter != nil {
+		if err := a.projectRouter.StopAllAgents(); err != nil {
+			// Log but continue cleanup
+		}
+	} else if a.agent != nil {
+		// Fallback for backward compatibility
 		if err := a.agent.Stop(); err != nil {
 			// Log but continue cleanup
 		}
