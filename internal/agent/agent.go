@@ -132,4 +132,8 @@ type Agent interface {
 
 	// Restart restarts the agent, preserving the session.
 	Restart(ctx context.Context) error
+
+	// RespondPermission responds to a pending permission request.
+	// behavior is typically "allow", "deny", or "answer:<value>" for AskUserQuestion.
+	RespondPermission(requestID, behavior string) error
 }

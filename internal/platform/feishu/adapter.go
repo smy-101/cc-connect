@@ -2,6 +2,7 @@ package feishu
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,12 @@ import (
 	"github.com/smy-101/cc-connect/internal/core"
 	"github.com/smy-101/cc-connect/internal/core/command"
 )
+
+// ReplyContext holds context for replying to a message.
+type ReplyContext struct {
+	ChatID    string
+	MessageID string
+}
 
 // Adapter integrates Feishu client with the message router.
 // It handles event processing, message conversion, and routing.
@@ -152,4 +159,75 @@ func (a *Adapter) SendReply(ctx context.Context, chatID, content string) error {
 // SendMessage sends a unified message through Feishu.
 func (a *Adapter) SendMessage(ctx context.Context, msg *core.Message) error {
 	return a.sender.SendMessage(ctx, msg)
+}
+
+// SendCard sends an interactive card message to the specified chat.
+func (a *Adapter) SendCard(ctx context.Context, chatID string, card *core.Card) error {
+	if card == nil {
+		return errors.New("card cannot be nil")
+	}
+	if chatID == "" {
+		return errors.New("chatID cannot be empty")
+	}
+
+	cardMap := renderCardMap(card)
+	cardJSON, err := json.Marshal(cardMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal card: %w", err)
+	}
+
+	return a.client.SendCard(ctx, chatID, cardJSON)
+}
+
+// ReplyCard sends an interactive card as a reply to a message.
+func (a *Adapter) ReplyCard(ctx context.Context, replyCtx *ReplyContext, card *core.Card) error {
+	if card == nil {
+		return errors.New("card cannot be nil")
+	}
+	if replyCtx == nil {
+		return errors.New("replyCtx cannot be nil")
+	}
+	if replyCtx.ChatID == "" {
+		return errors.New("chatID cannot be empty")
+	}
+	if replyCtx.MessageID == "" {
+		return errors.New("messageID cannot be empty")
+	}
+
+	cardMap := renderCardMap(card)
+	cardJSON, err := json.Marshal(cardMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal card: %w", err)
+	}
+
+	return a.client.ReplyCard(ctx, replyCtx.ChatID, replyCtx.MessageID, cardJSON)
+}
+
+// HandleCardCallback processes a card interaction callback from Feishu.
+// The callback data is parsed and converted to a command message, then routed.
+func (a *Adapter) HandleCardCallback(ctx context.Context, data map[string]any) error {
+	msg, err := ParseCardCallback(data)
+	if err != nil {
+		slog.Warn("Feishu card callback parsing failed", "error", err)
+		return fmt.Errorf("failed to parse card callback: %w", err)
+	}
+
+	slog.Debug("Feishu card callback parsed",
+		"user_id", msg.UserID,
+		"channel_id", msg.ChannelID,
+		"content", msg.Content,
+	)
+
+	// Route the command message
+	if err := a.router.Route(ctx, msg); err != nil {
+		if errors.Is(err, core.ErrNoHandler) {
+			slog.Debug("Feishu card callback has no registered handler", "content", msg.Content)
+			return nil
+		}
+		slog.Error("Feishu card callback routing failed", "error", err, "content", msg.Content)
+		return fmt.Errorf("failed to route card callback: %w", err)
+	}
+
+	slog.Debug("Feishu card callback routed", "content", msg.Content)
+	return nil
 }

@@ -51,12 +51,18 @@ type Event struct {
 	ToolName string
 	// ToolInput is the tool input (for EventToolUse, EventPermissionRequest)
 	ToolInput map[string]interface{}
+	// ToolInputRaw is the raw tool input (for permission allow response)
+	ToolInputRaw map[string]any
 	// RequestID is the permission request ID (for EventPermissionRequest)
 	RequestID string
+	// Questions is the list of questions for AskUserQuestion
+	Questions []UserQuestion
 	// Error contains the error if any
 	Error error
 	// Done indicates if this is the final event
 	Done bool
+	// AutoApproved indicates if this permission was auto-approved
+	AutoApproved bool
 }
 
 // ImageAttachment represents an image to be sent with a message
@@ -115,6 +121,14 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	// Permission state management
+	pending          *pendingPermission
+	pendingMu        sync.Mutex
+	permissionTimeout time.Duration
+
+	// Busy state (waiting for permission)
+	busy atomic.Bool
 }
 
 // newSession creates a new Session with a persistent Claude process
@@ -361,22 +375,53 @@ func (s *Session) handleControlRequest(raw map[string]interface{}) {
 	toolName, _ := request["tool_name"].(string)
 	input, _ := request["input"].(map[string]interface{})
 
+	// Parse questions for AskUserQuestion
+	var questions []UserQuestion
+	if toolName == "AskUserQuestion" {
+		questions = parseUserQuestions(input)
+	}
+
 	// Auto mode: approve immediately without asking the user
 	if s.autoApprove {
 		slog.Debug("Auto-approving permission request", "request_id", requestID, "tool", toolName)
-		_ = s.RespondPermission(requestID, PermissionResult{
+		// Send auto-approve event for logging
+		evt := Event{
+			Type:         EventPermissionRequest,
+			RequestID:    requestID,
+			ToolName:     toolName,
+			ToolInput:    input,
+			ToolInputRaw: input,
+			Questions:    questions,
+			AutoApproved: true,
+		}
+		select {
+		case s.events <- evt:
+		case <-s.ctx.Done():
+			return
+		}
+		// Send response directly without pending state check
+		_ = s.sendPermissionResponse(requestID, PermissionResult{
 			Behavior:     "allow",
 			UpdatedInput: input,
 		})
 		return
 	}
 
+	// Create pending permission state
+	s.pendingMu.Lock()
+	s.pending = newPendingPermission(requestID, toolName, input)
+	s.pending.questions = questions
+	s.busy.Store(true) // Mark session as busy
+	s.pendingMu.Unlock()
+
 	slog.Info("Permission request received", "request_id", requestID, "tool", toolName)
 	evt := Event{
-		Type:      EventPermissionRequest,
-		RequestID: requestID,
-		ToolName:  toolName,
-		ToolInput: input,
+		Type:         EventPermissionRequest,
+		RequestID:    requestID,
+		ToolName:     toolName,
+		ToolInput:    input,
+		ToolInputRaw: input,
+		Questions:    questions,
 	}
 
 	select {
@@ -384,6 +429,90 @@ func (s *Session) handleControlRequest(raw map[string]interface{}) {
 	case <-s.ctx.Done():
 		return
 	}
+
+	// Block waiting for permission response
+	s.waitForPermissionResponse()
+}
+
+// waitForPermissionResponse blocks until the permission is resolved or times out
+func (s *Session) waitForPermissionResponse() {
+	s.pendingMu.Lock()
+	pending := s.pending
+	timeout := s.permissionTimeout
+	s.pendingMu.Unlock()
+
+	if pending == nil {
+		return
+	}
+
+	// Default timeout is 5 minutes
+	if timeout == 0 {
+		timeout = 5 * time.Minute
+	}
+
+	// Create timeout context
+	ctx, cancel := context.WithTimeout(s.ctx, timeout)
+	defer cancel()
+
+	select {
+	case <-pending.resolved:
+		// Permission was resolved by user response
+		result := pending.getResult()
+		if result != nil {
+			_ = s.sendPermissionResponse(pending.requestID, *result)
+		}
+		s.busy.Store(false) // Clear busy state
+	case <-ctx.Done():
+		// Context cancelled or timeout
+		if ctx.Err() == context.DeadlineExceeded {
+			slog.Warn("Permission request timed out, auto-denying", "request_id", pending.requestID)
+			// Auto-deny on timeout
+			_ = s.sendPermissionResponse(pending.requestID, PermissionResult{
+				Behavior: "deny",
+				Message:  "等待超时，自动拒绝",
+			})
+		}
+		s.busy.Store(false) // Clear busy state
+	}
+}
+
+// parseUserQuestions extracts questions from AskUserQuestion tool input
+func parseUserQuestions(input map[string]interface{}) []UserQuestion {
+	questionsRaw, ok := input["questions"].([]interface{})
+	if !ok {
+		return nil
+	}
+
+	var questions []UserQuestion
+	for _, qRaw := range questionsRaw {
+		qMap, ok := qRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		q := UserQuestion{}
+		q.Question, _ = qMap["question"].(string)
+		q.Header, _ = qMap["header"].(string)
+		q.MultiSelect, _ = qMap["multiSelect"].(bool)
+
+		// Parse options
+		if optionsRaw, ok := qMap["options"].([]interface{}); ok {
+			for _, optRaw := range optionsRaw {
+				optMap, ok := optRaw.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				opt := UserQuestionOption{}
+				opt.Label, _ = optMap["label"].(string)
+				opt.Description, _ = optMap["description"].(string)
+				q.Options = append(q.Options, opt)
+			}
+		}
+
+		questions = append(questions, q)
+	}
+
+	return questions
 }
 
 // summarizeInput produces a short human-readable description of tool input
@@ -431,6 +560,10 @@ func (s *Session) Events() <-chan Event {
 func (s *Session) Send(prompt string, images []ImageAttachment, files []FileAttachment) error {
 	if !s.alive.Load() {
 		return fmt.Errorf("session process is not running")
+	}
+
+	if s.busy.Load() {
+		return fmt.Errorf("session is busy waiting for permission response")
 	}
 
 	if len(images) == 0 && len(files) == 0 {
@@ -540,16 +673,58 @@ func (s *Session) SendMessage(ctx context.Context, prompt string, images []Image
 }
 
 // RespondPermission sends a control_response to the Claude process stdin
+// It validates that there is a matching pending permission request
 func (s *Session) RespondPermission(requestID string, result PermissionResult) error {
 	if !s.alive.Load() {
 		return fmt.Errorf("session process is not running")
 	}
 
+	// Check for pending permission
+	s.pendingMu.Lock()
+	if s.pending == nil {
+		s.pendingMu.Unlock()
+		return fmt.Errorf("no pending permission request with id: %s", requestID)
+	}
+	if s.pending.requestID != requestID {
+		s.pendingMu.Unlock()
+		return fmt.Errorf("no pending permission request with id: %s", requestID)
+	}
+	if s.pending.isResolved() {
+		s.pendingMu.Unlock()
+		return fmt.Errorf("permission request already resolved: %s", requestID)
+	}
+
+	// Store result and mark as resolved
+	s.pending.setResult(&result)
+	s.pendingMu.Unlock()
+
+	return s.sendPermissionResponse(requestID, result)
+}
+
+// parsePermissionBehavior parses the behavior string and returns the actual behavior
+// and any updated input. It handles "answer:<value>" format for AskUserQuestion.
+func parsePermissionBehavior(behavior string) (string, map[string]interface{}) {
+	if strings.HasPrefix(behavior, "answer:") {
+		answer := strings.TrimPrefix(behavior, "answer:")
+		return "allow", map[string]interface{}{
+			"answers": []string{answer},
+		}
+	}
+	return behavior, make(map[string]interface{})
+}
+
+// sendPermissionResponse sends the control_response to Claude stdin without state validation
+func (s *Session) sendPermissionResponse(requestID string, result PermissionResult) error {
 	var permResponse map[string]interface{}
-	if result.Behavior == "allow" {
-		updatedInput := result.UpdatedInput
-		if updatedInput == nil {
-			updatedInput = make(map[string]interface{})
+
+	behavior, updatedInput := parsePermissionBehavior(result.Behavior)
+
+	if behavior == "allow" {
+		// Merge with any provided UpdatedInput
+		if result.UpdatedInput != nil {
+			for k, v := range result.UpdatedInput {
+				updatedInput[k] = v
+			}
 		}
 		permResponse = map[string]interface{}{
 			"behavior":     "allow",
@@ -610,9 +785,19 @@ func (s *Session) Close() error {
 	}
 }
 
+// IsBusy returns true if the session is waiting for a permission response
+func (s *Session) IsBusy() bool {
+	return s.busy.Load()
+}
+
 // Alive returns true if the session is active
 func (s *Session) Alive() bool {
 	return s.alive.Load()
+}
+
+// SetPermissionTimeout sets the timeout for permission requests
+func (s *Session) SetPermissionTimeout(timeout time.Duration) {
+	s.permissionTimeout = timeout
 }
 
 // CurrentSessionID returns the current session ID
@@ -626,6 +811,78 @@ type PermissionResult struct {
 	Behavior     string                 `json:"behavior"`
 	Message      string                 `json:"message,omitempty"`
 	UpdatedInput map[string]interface{} `json:"updatedInput,omitempty"`
+}
+
+// UserQuestionOption represents an option in a UserQuestion
+type UserQuestionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+// UserQuestion represents a question from AskUserQuestion tool
+type UserQuestion struct {
+	Question   string               `json:"question"`
+	Header     string               `json:"header,omitempty"`
+	Options    []UserQuestionOption `json:"options,omitempty"`
+	MultiSelect bool                `json:"multiSelect"`
+}
+
+// pendingPermission represents a pending permission request state
+type pendingPermission struct {
+	requestID    string
+	toolName     string
+	toolInput    string              // summarized input for display
+	toolInputRaw map[string]any      // raw input for allow response
+	questions    []UserQuestion      // for AskUserQuestion
+	resolved     chan struct{}       // blocking channel
+	result       *PermissionResult
+	resultMu     sync.Mutex
+	resolveOnce  sync.Once
+}
+
+// newPendingPermission creates a new pendingPermission
+func newPendingPermission(requestID, toolName string, toolInput map[string]any) *pendingPermission {
+	return &pendingPermission{
+		requestID:    requestID,
+		toolName:     toolName,
+		toolInput:    summarizeInput(toolName, toolInput),
+		toolInputRaw: toolInput,
+		resolved:     make(chan struct{}),
+	}
+}
+
+// setResult stores the result and closes the resolved channel
+// It is safe to call multiple times - only the first call takes effect
+func (p *pendingPermission) setResult(result *PermissionResult) {
+	p.resultMu.Lock()
+	defer p.resultMu.Unlock()
+
+	if p.result != nil {
+		return // already resolved
+	}
+	p.result = result
+
+	// Close channel only once
+	p.resolveOnce.Do(func() {
+		close(p.resolved)
+	})
+}
+
+// getResult returns the stored result (thread-safe)
+func (p *pendingPermission) getResult() *PermissionResult {
+	p.resultMu.Lock()
+	defer p.resultMu.Unlock()
+	return p.result
+}
+
+// isResolved returns true if the permission has been resolved
+func (p *pendingPermission) isResolved() bool {
+	select {
+	case <-p.resolved:
+		return true
+	default:
+		return false
+	}
 }
 
 // filterEnv returns a copy of env with entries matching the given key removed

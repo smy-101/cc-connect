@@ -155,3 +155,7 @@ func (m *mockAgentForInterfaceTest) Status() AgentStatus {
 func (m *mockAgentForInterfaceTest) Restart(ctx context.Context) error {
 	return nil
 }
+
+func (m *mockAgentForInterfaceTest) RespondPermission(requestID, behavior string) error {
+	return nil
+}

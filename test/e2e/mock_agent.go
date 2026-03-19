@@ -10,15 +10,21 @@ import (
 
 // MockAgent is a mock implementation of agent.Agent for testing.
 type MockAgent struct {
-	mu          sync.RWMutex
-	responses   map[string]string
-	delay       time.Duration
-	err         error
-	status      agent.AgentStatus
-	permMode    agent.PermissionMode
-	sessionID   string
-	sendCount   int
-	lastContent string
+	mu                   sync.RWMutex
+	responses            map[string]string
+	delay                time.Duration
+	err                  error
+	status               agent.AgentStatus
+	permMode             agent.PermissionMode
+	sessionID            string
+	sendCount            int
+	lastContent          string
+	pendingRequestID     string
+	pendingToolName      string
+	pendingToolInput     map[string]any
+	lastPermRequestID    string
+	lastPermBehavior     string
+	busy                 bool
 }
 
 // NewMockAgent creates a new MockAgent with default settings.
@@ -161,4 +167,63 @@ func (m *MockAgent) LastContent() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.lastContent
+}
+
+// RespondPermission implements agent.Agent.
+func (m *MockAgent) RespondPermission(requestID, behavior string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Record the call regardless
+	m.lastPermRequestID = requestID
+	m.lastPermBehavior = behavior
+
+	// Check if there's a pending request with matching ID
+	if m.pendingRequestID == "" || m.pendingRequestID != requestID {
+		return nil // Return nil - the executor layer handles validation
+	}
+
+	// Clear pending state on success
+	m.pendingRequestID = ""
+	m.busy = false
+
+	return nil
+}
+
+// HasPendingPermission returns true if there's a pending permission request.
+func (m *MockAgent) HasPendingPermission() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.pendingRequestID != ""
+}
+
+// SetPendingPermission sets up a pending permission request for testing.
+func (m *MockAgent) SetPendingPermission(requestID, toolName string, toolInput map[string]any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pendingRequestID = requestID
+	m.pendingToolName = toolName
+	m.pendingToolInput = toolInput
+	m.busy = true
+}
+
+// LastPermissionBehavior returns the last behavior used in RespondPermission.
+func (m *MockAgent) LastPermissionBehavior() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastPermBehavior
+}
+
+// LastPermissionRequestID returns the last request ID used in RespondPermission.
+func (m *MockAgent) LastPermissionRequestID() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastPermRequestID
+}
+
+// IsBusy returns whether the agent is busy waiting for a permission response.
+func (m *MockAgent) IsBusy() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.busy
 }

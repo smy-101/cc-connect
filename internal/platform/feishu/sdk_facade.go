@@ -125,7 +125,7 @@ func (f *realSDKFacade) Stop(ctx context.Context) error {
 }
 
 func (f *realSDKFacade) SendText(ctx context.Context, chatID, content string) error {
-	slog.Debug("Feishu API send requested", sendLogFields(chatID, content)...)
+	slog.Debug("Feishu API send text requested", sendLogFields(chatID, content)...)
 
 	body := larkim.NewCreateMessageReqBodyBuilder().
 		ReceiveId(chatID).
@@ -141,17 +141,83 @@ func (f *realSDKFacade) SendText(ctx context.Context, chatID, content string) er
 
 	resp, err := f.apiClient.Im.V1.Message.Create(ctx, req)
 	if err != nil {
-		slog.Error("Feishu API send failed", append(sendLogFields(chatID, content), "error", err)...)
+		slog.Error("Feishu API send text failed", append(sendLogFields(chatID, content), "error", err)...)
 		return err
 	}
 	if !resp.Success() {
 		err = fmt.Errorf("feishu send text failed: code=%d msg=%s", resp.Code, resp.Msg)
-		slog.Error("Feishu API send failed", append(sendLogFields(chatID, content), "error", err)...)
+		slog.Error("Feishu API send text failed", append(sendLogFields(chatID, content), "error", err)...)
 		return err
 	}
 
-	slog.Debug("Feishu API send succeeded", sendLogFields(chatID, content)...)
+	slog.Debug("Feishu API send text succeeded", sendLogFields(chatID, content)...)
 
+	return nil
+}
+
+func (f *realSDKFacade) SendCard(ctx context.Context, chatID string, cardJSON []byte) error {
+	slog.Debug("Feishu API send card requested", "chat_id", chatID, "card_size", len(cardJSON))
+
+	// Build card content as JSON string
+	cardContent := string(cardJSON)
+
+	body := larkim.NewCreateMessageReqBodyBuilder().
+		ReceiveId(chatID).
+		MsgType("interactive").
+		Content(cardContent).
+		Uuid(uuid.NewString()).
+		Build()
+
+	req := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType("chat_id").
+		Body(body).
+		Build()
+
+	resp, err := f.apiClient.Im.V1.Message.Create(ctx, req)
+	if err != nil {
+		slog.Error("Feishu API send card failed", "chat_id", chatID, "error", err)
+		return err
+	}
+	if !resp.Success() {
+		err = fmt.Errorf("feishu send card failed: code=%d msg=%s", resp.Code, resp.Msg)
+		slog.Error("Feishu API send card failed", "chat_id", chatID, "error", err)
+		return err
+	}
+
+	slog.Debug("Feishu API send card succeeded", "chat_id", chatID)
+	return nil
+}
+
+func (f *realSDKFacade) ReplyCard(ctx context.Context, chatID, messageID string, cardJSON []byte) error {
+	slog.Debug("Feishu API reply card requested", "chat_id", chatID, "message_id", messageID, "card_size", len(cardJSON))
+
+	// Build card content as JSON string
+	cardContent := string(cardJSON)
+
+	// Use ReplyMessage API to reply to a specific message
+	body := larkim.NewReplyMessageReqBodyBuilder().
+		Content(cardContent).
+		MsgType("interactive").
+		Uuid(uuid.NewString()).
+		Build()
+
+	req := larkim.NewReplyMessageReqBuilder().
+		MessageId(messageID).
+		Body(body).
+		Build()
+
+	resp, err := f.apiClient.Im.V1.Message.Reply(ctx, req)
+	if err != nil {
+		slog.Error("Feishu API reply card failed", "chat_id", chatID, "message_id", messageID, "error", err)
+		return err
+	}
+	if !resp.Success() {
+		err = fmt.Errorf("feishu reply card failed: code=%d msg=%s", resp.Code, resp.Msg)
+		slog.Error("Feishu API reply card failed", "chat_id", chatID, "message_id", messageID, "error", err)
+		return err
+	}
+
+	slog.Debug("Feishu API reply card succeeded", "chat_id", chatID, "message_id", messageID)
 	return nil
 }
 

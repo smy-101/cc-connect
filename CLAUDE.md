@@ -46,7 +46,54 @@ test/
 - **Unified Message Model**: Supports `text`, `voice`, `image`, `command` types
 - **Message Serialization**: Must be compatible with Python version (fields: id, platform, user_id, content, type, timestamp)
 - **Permission Modes**: `default`, `edit`/`acceptEdits`, `plan`, `yolo`/`bypassPermissions`
-- **Slash Commands**: `/mode`, `/new`, `/list`, `/help`, `/allow`, `/stop`, `/provider`, `/cron`
+- **Slash Commands**: `/mode`, `/new`, `/list`, `/help`, `/allow`, `/deny`, `/answer`, `/stop`, `/provider`, `/cron`
+
+## Interactive Permission Handling
+
+The system supports interactive permission requests from Claude Code, allowing users to approve/deny tool usage and answer questions via chat cards.
+
+### Permission Flow
+
+1. **Tool Permission Request**: Claude requests to use a tool (e.g., Bash, Read)
+2. **Card Display**: System sends an interactive card to Feishu with Allow/Deny buttons
+3. **User Response**: User clicks button or uses `/allow` or `/deny` command
+4. **Execution Continues**: Claude receives the response and continues
+
+### AskUserQuestion Flow
+
+1. **Question**: Claude asks a question with options
+2. **Option Card**: System displays buttons for each option
+3. **Answer**: User clicks an option or uses `/answer` command
+4. **Response**: Claude receives the answer and continues
+
+### Slash Commands for Permissions
+
+| Command | Description |
+|---------|-------------|
+| `/allow <request_id>` | Approve a pending permission request |
+| `/deny <request_id>` | Deny a pending permission request |
+| `/answer <request_id> <answer>` | Answer an AskUserQuestion request |
+
+### Permission Modes
+
+| Mode | Description |
+|------|-------------|
+| `default` | Interactive mode - prompts for permission |
+| `plan` | Plan mode - shows plan before execution |
+| `edit` | Edit mode - allows file edits |
+| `acceptEdits` | Auto-accept edit mode |
+| `yolo` / `bypassPermissions` | Auto-approve all requests |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `internal/agent/claudecode/session.go` | Permission state machine, pending permission handling |
+| `internal/core/permission_handler.go` | Permission request event handling |
+| `internal/core/card.go` | Platform-agnostic card structure |
+| `internal/core/question_card.go` | AskUserQuestion card generation |
+| `internal/platform/feishu/card_callback.go` | Card callback parsing |
+| `internal/platform/feishu/card_renderer.go` | Card JSON rendering for Feishu |
 
 ## OpenSpec Workflow
 

@@ -209,5 +209,13 @@ func (m *MockAgent) Reset() {
 // Assert that MockAgent implements Agent interface
 var _ agent.Agent = (*MockAgent)(nil)
 
+// RespondPermission implements agent.Agent.RespondPermission
+func (m *MockAgent) RespondPermission(requestID, behavior string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// For testing purposes, just record the call
+	return nil
+}
+
 // MockAgentError is a helper to create a mock error
 var MockAgentError = errors.New("mock agent error")

@@ -140,7 +140,7 @@ func TestRealSDKFacadeSendTextLogsFailureWithoutSensitiveData(t *testing.T) {
 	}
 
 	assertLogContainsAll(t, buffer.String(), []string{
-		"Feishu API send failed",
+		"Feishu API send text failed",
 		"chat_id=oc-chat",
 	})
 	assertLogExcludesAll(t, buffer.String(), []string{"app-secret", "super secret body"})

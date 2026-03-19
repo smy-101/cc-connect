@@ -145,3 +145,65 @@ func (e *Executor) handleStop(ctx context.Context, cmd Command, msg *core.Messag
 
 	return CommandResult{Message: "✅ Agent 已停止"}
 }
+
+// handleAllow handles the /allow command for approving permission requests
+func (e *Executor) handleAllow(ctx context.Context, cmd Command, msg *core.Message) CommandResult {
+	if len(cmd.Args) < 1 {
+		return CommandResult{
+			Message: "❌ 请提供请求 ID\n用法: /allow <request_id>",
+			Error:   fmt.Errorf("missing request ID"),
+		}
+	}
+
+	requestID := cmd.Args[0]
+	if err := e.agent.RespondPermission(requestID, "allow"); err != nil {
+		return CommandResult{
+			Message: fmt.Sprintf("❌ 批准失败: %v", err),
+			Error:   err,
+		}
+	}
+
+	return CommandResult{Message: fmt.Sprintf("✅ 已批准请求: %s", requestID)}
+}
+
+// handleDeny handles the /deny command for rejecting permission requests
+func (e *Executor) handleDeny(ctx context.Context, cmd Command, msg *core.Message) CommandResult {
+	if len(cmd.Args) < 1 {
+		return CommandResult{
+			Message: "❌ 请提供请求 ID\n用法: /deny <request_id>",
+			Error:   fmt.Errorf("missing request ID"),
+		}
+	}
+
+	requestID := cmd.Args[0]
+	if err := e.agent.RespondPermission(requestID, "deny"); err != nil {
+		return CommandResult{
+			Message: fmt.Sprintf("❌ 拒绝失败: %v", err),
+			Error:   err,
+		}
+	}
+
+	return CommandResult{Message: fmt.Sprintf("✅ 已拒绝请求: %s", requestID)}
+}
+
+// handleAnswer handles the /answer command for responding to AskUserQuestion
+func (e *Executor) handleAnswer(ctx context.Context, cmd Command, msg *core.Message) CommandResult {
+	if len(cmd.Args) < 2 {
+		return CommandResult{
+			Message: "❌ 请提供请求 ID 和答案\n用法: /answer <request_id> <answer>",
+			Error:   fmt.Errorf("missing request ID or answer"),
+		}
+	}
+
+	requestID := cmd.Args[0]
+	answer := strings.Join(cmd.Args[1:], " ")
+
+	if err := e.agent.RespondPermission(requestID, "answer:"+answer); err != nil {
+		return CommandResult{
+			Message: fmt.Sprintf("❌ 回答失败: %v", err),
+			Error:   err,
+		}
+	}
+
+	return CommandResult{Message: fmt.Sprintf("✅ 已回答: %s", answer)}
+}

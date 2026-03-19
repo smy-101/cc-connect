@@ -56,6 +56,10 @@ func (m *MockAgent) Restart(ctx context.Context) error {
 	return nil
 }
 
+func (m *MockAgent) RespondPermission(requestID, behavior string) error {
+	return nil
+}
+
 // TestAgentManagerGetOrCreate tests GetOrCreate functionality
 func TestAgentManagerGetOrCreate(t *testing.T) {
 	manager := NewManager()

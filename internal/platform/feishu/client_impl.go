@@ -36,6 +36,8 @@ type sdkFacade interface {
 	Start(ctx context.Context, callbacks sdkFacadeCallbacks) error
 	Stop(ctx context.Context) error
 	SendText(ctx context.Context, chatID, content string) error
+	SendCard(ctx context.Context, chatID string, cardJSON []byte) error
+	ReplyCard(ctx context.Context, chatID, messageID string, cardJSON []byte) error
 }
 
 // SDKClient wraps the Feishu SDK facade to implement FeishuClient interface.
@@ -193,6 +195,32 @@ func (c *SDKClient) SendText(ctx context.Context, chatID, content string) error 
 		return ErrClientNotReady
 	}
 	return facade.SendText(ctx, chatID, content)
+}
+
+// SendCard sends an interactive card message to the specified chat.
+func (c *SDKClient) SendCard(ctx context.Context, chatID string, cardJSON []byte) error {
+	c.mu.RLock()
+	ready := c.state == stateReady
+	facade := c.facade
+	c.mu.RUnlock()
+
+	if !ready {
+		return ErrClientNotReady
+	}
+	return facade.SendCard(ctx, chatID, cardJSON)
+}
+
+// ReplyCard sends an interactive card as a reply to a message.
+func (c *SDKClient) ReplyCard(ctx context.Context, chatID, messageID string, cardJSON []byte) error {
+	c.mu.RLock()
+	ready := c.state == stateReady
+	facade := c.facade
+	c.mu.RUnlock()
+
+	if !ready {
+		return ErrClientNotReady
+	}
+	return facade.ReplyCard(ctx, chatID, messageID, cardJSON)
 }
 
 // OnEvent registers an event handler for message events.

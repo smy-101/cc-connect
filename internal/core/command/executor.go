@@ -68,6 +68,12 @@ func (e *Executor) Execute(ctx context.Context, cmd Command, msg *core.Message) 
 		return e.handleStop(ctx, cmd, msg)
 	case "project":
 		return e.handleProject(ctx, cmd, msg)
+	case "allow":
+		return e.handleAllow(ctx, cmd, msg)
+	case "deny":
+		return e.handleDeny(ctx, cmd, msg)
+	case "answer":
+		return e.handleAnswer(ctx, cmd, msg)
 	default:
 		return CommandResult{
 			Message: "未知命令: /" + cmd.Name + "\n输入 /help 查看可用命令",

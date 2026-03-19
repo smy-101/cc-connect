@@ -159,6 +159,21 @@ func (a *ClaudeCodeAgent) Restart(ctx context.Context) error {
 	return a.Start(ctx)
 }
 
+// RespondPermission responds to a pending permission request
+func (a *ClaudeCodeAgent) RespondPermission(requestID, behavior string) error {
+	a.sessionMu.Lock()
+	defer a.sessionMu.Unlock()
+
+	if a.session == nil {
+		return fmt.Errorf("no active session")
+	}
+
+	result := PermissionResult{
+		Behavior: behavior,
+	}
+	return a.session.RespondPermission(requestID, result)
+}
+
 // SetPermissionMode changes the permission mode
 func (a *ClaudeCodeAgent) SetPermissionMode(mode agent.PermissionMode) error {
 	a.mu.Lock()

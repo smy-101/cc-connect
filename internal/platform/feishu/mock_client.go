@@ -19,6 +19,8 @@ type MockClient struct {
 	ConnectCalled    int
 	DisconnectCalled int
 	SendTextCalled   int
+	SendCardCalled   int
+	ReplyCardCalled  int
 	OnEventCalled    int
 
 	// Additional tracking for integration tests
@@ -27,11 +29,18 @@ type MockClient struct {
 	// Configurable behavior
 	ConnectError    error
 	SendTextError   error
+	SendCardError   error
+	ReplyCardError  error
 	SendTextHandler func(chatID, content string) error
 
 	// Recorded calls
-	LastSendTextChatID  string
-	LastSendTextContent string
+	LastSendTextChatID    string
+	LastSendTextContent   string
+	LastSendCardChatID    string
+	LastSendCardContent   []byte
+	LastReplyCardChatID   string
+	LastReplyCardMsgID    string
+	LastReplyCardContent  []byte
 }
 
 // NewMockClient creates a new MockClient instance.
@@ -99,6 +108,31 @@ func (m *MockClient) OnEvent(handler EventHandler) {
 	m.eventHandler = handler
 }
 
+// SendCard implements FeishuClient.SendCard.
+func (m *MockClient) SendCard(ctx context.Context, chatID string, cardJSON []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.SendCardCalled++
+	m.LastSendCardChatID = chatID
+	m.LastSendCardContent = cardJSON
+
+	return m.SendCardError
+}
+
+// ReplyCard implements FeishuClient.ReplyCard.
+func (m *MockClient) ReplyCard(ctx context.Context, chatID, messageID string, cardJSON []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.ReplyCardCalled++
+	m.LastReplyCardChatID = chatID
+	m.LastReplyCardMsgID = messageID
+	m.LastReplyCardContent = cardJSON
+
+	return m.ReplyCardError
+}
+
 // SimulateMessageEvent simulates receiving a message event.
 // This is useful for testing event handling logic.
 func (m *MockClient) SimulateMessageEvent(ctx context.Context, event *MessageReceiveEvent) error {
@@ -123,11 +157,20 @@ func (m *MockClient) Reset() {
 	m.DisconnectCalled = 0
 	m.SendTextCalled = 0
 	m.SendTextCalledCount = 0
+	m.SendCardCalled = 0
+	m.ReplyCardCalled = 0
 	m.OnEventCalled = 0
 	m.ConnectError = nil
 	m.SendTextError = nil
+	m.SendCardError = nil
+	m.ReplyCardError = nil
 	m.SendTextHandler = nil
 	m.LastSendTextChatID = ""
 	m.LastSendTextContent = ""
+	m.LastSendCardChatID = ""
+	m.LastSendCardContent = nil
+	m.LastReplyCardChatID = ""
+	m.LastReplyCardMsgID = ""
+	m.LastReplyCardContent = nil
 	m.eventHandler = nil
 }

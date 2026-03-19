@@ -251,9 +251,11 @@ type fakeSDKFacade struct {
 	lastSendChatID  string
 	lastSendContent string
 
-	startFunc func(ctx context.Context, callbacks sdkFacadeCallbacks) error
-	stopFunc  func(ctx context.Context) error
-	sendFunc  func(ctx context.Context, chatID, content string) error
+	startFunc   func(ctx context.Context, callbacks sdkFacadeCallbacks) error
+	stopFunc    func(ctx context.Context) error
+	sendFunc    func(ctx context.Context, chatID, content string) error
+	sendCardFunc    func(ctx context.Context, chatID string, cardJSON []byte) error
+	replyCardFunc   func(ctx context.Context, chatID, messageID string, cardJSON []byte) error
 }
 
 func (f *fakeSDKFacade) Start(ctx context.Context, callbacks sdkFacadeCallbacks) error {
@@ -289,6 +291,26 @@ func (f *fakeSDKFacade) SendText(ctx context.Context, chatID, content string) er
 		return nil
 	}
 	return sendFunc(ctx, chatID, content)
+}
+
+func (f *fakeSDKFacade) SendCard(ctx context.Context, chatID string, cardJSON []byte) error {
+	f.mu.Lock()
+	sendCardFunc := f.sendCardFunc
+	f.mu.Unlock()
+	if sendCardFunc == nil {
+		return nil
+	}
+	return sendCardFunc(ctx, chatID, cardJSON)
+}
+
+func (f *fakeSDKFacade) ReplyCard(ctx context.Context, chatID, messageID string, cardJSON []byte) error {
+	f.mu.Lock()
+	replyCardFunc := f.replyCardFunc
+	f.mu.Unlock()
+	if replyCardFunc == nil {
+		return nil
+	}
+	return replyCardFunc(ctx, chatID, messageID, cardJSON)
 }
 
 func newSDKTextEvent(eventID, messageID, chatID, text string) *larkim.P2MessageReceiveV1 {

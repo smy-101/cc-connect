@@ -25,6 +25,14 @@ type FeishuClient interface {
 	// The content should be in Feishu format: `{"text":"message content"}`
 	SendText(ctx context.Context, chatID, content string) error
 
+	// SendCard sends an interactive card message to the specified chat.
+	// The cardJSON should be in Feishu card JSON format.
+	SendCard(ctx context.Context, chatID string, cardJSON []byte) error
+
+	// ReplyCard sends an interactive card as a reply to a message.
+	// The cardJSON should be in Feishu card JSON format.
+	ReplyCard(ctx context.Context, chatID, messageID string, cardJSON []byte) error
+
 	// OnEvent registers an event handler for message events.
 	OnEvent(handler EventHandler)
 }

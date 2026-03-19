@@ -71,6 +71,10 @@ func (m *mockAgent) Restart(ctx context.Context) error {
 	return nil
 }
 
+func (m *mockAgent) RespondPermission(requestID, behavior string) error {
+	return nil
+}
+
 // TestProjectStatus tests ProjectStatus constants
 func TestProjectStatus(t *testing.T) {
 	tests := []struct {
